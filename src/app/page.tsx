@@ -31,6 +31,7 @@ import { UNCATEGORIZED } from "@/lib/types";
 import { formatMoney, formatMoneyCompact } from "@/lib/money";
 import { Card, PageHeader, Money, StatTile, Badge, EmptyState } from "@/components/ui";
 import { TrendChart, CategoryDonut } from "@/components/charts";
+import { Onboarding } from "@/components/Onboarding";
 
 // Financial data is per-request; never statically cache the dashboard.
 export const dynamic = "force-dynamic";
@@ -119,6 +120,19 @@ export default async function Dashboard() {
 
   const attentionCount = uncategorizedCount + pendingCount;
   const monthLabel = format(now, "MMMM");
+
+  // Fresh install / empty database (e.g. right after a deploy): show onboarding.
+  if (balances.length === 0) {
+    return (
+      <div className="space-y-5">
+        <PageHeader
+          title={greetingFor(now.getHours())}
+          subtitle={format(now, "EEEE · MMMM d, yyyy")}
+        />
+        <Onboarding />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 md:space-y-5">
