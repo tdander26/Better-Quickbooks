@@ -1,0 +1,14 @@
+# Netlify build config for Better Books.
+# - Generates the Prisma client from the PostgreSQL schema (Netlify DB / Neon).
+# - Table DDL is applied automatically from netlify/database/migrations/.
+# - The Next.js runtime plugin handles SSR, API routes, and middleware.
+
+[build]
+  command = "prisma generate --schema prisma/schema.prod.prisma && next build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

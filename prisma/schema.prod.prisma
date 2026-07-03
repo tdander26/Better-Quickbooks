@@ -1,0 +1,160 @@
+// PRODUCTION schema — PostgreSQL (Netlify DB / Neon).
+//
+// Identical models to prisma/schema.prisma; only the datasource and generator
+// differ. The Netlify build generates the client from THIS file
+// (`prisma generate --schema prisma/schema.prod.prisma`), and Netlify DB injects
+// NETLIFY_DATABASE_URL automatically. Table DDL is applied in-cloud from
+// netlify/database/migrations (generated via `prisma migrate diff`).
+//
+// Keep these models in sync with prisma/schema.prisma.
+
+generator client {
+  provider      = "prisma-client-js"
+  // Cover Netlify's build image (native) and both possible Lambda runtimes
+  // (Amazon Linux 2 = openssl 1.0.x, AL2023 = openssl 3.0.x).
+  binaryTargets = ["native", "rhel-openssl-1.0.x", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("NETLIFY_DATABASE_URL")
+}
+
+model Account {
+  id             String   @id @default(cuid())
+  name           String
+  institution    String
+  type           String
+  classification String
+  currency       String   @default("USD")
+
+  openingBalanceCents Int      @default(0)
+  openingDate         DateTime @default(now())
+
+  reportedBalanceCents Int?
+  balanceDate          DateTime?
+
+  simplefinAccountId String? @unique
+  connectionId       String?
+  connection         FeedConnection? @relation(fields: [connectionId], references: [id])
+
+  archived  Boolean  @default(false)
+  sortOrder Int      @default(0)
+
+  transactions Transaction[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Transaction {
+  id            String   @id @default(cuid())
+  accountId     String
+  account       Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  postedAt      DateTime
+  amountCents   Int
+  payee         String   @default("")
+  description   String   @default("")
+  memo          String   @default("")
+  pending       Boolean  @default(false)
+
+  providerTxnId String?  @unique
+  importBatchId String?
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  transferId    String?
+  reviewed      Boolean  @default(false)
+  notes         String   @default("")
+
+  splits    Split[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId, postedAt])
+  @@index([transferId])
+}
+
+model Split {
+  id            String   @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  amountCents Int
+  memo        String  @default("")
+
+  @@index([categoryId])
+  @@index([transactionId])
+}
+
+model Category {
+  id       String  @id @default(cuid())
+  name     String
+  section  String
+  icon     String  @default("")
+  color    String  @default("")
+
+  parentId String?
+  parent   Category?  @relation("SubCategories", fields: [parentId], references: [id])
+  children Category[] @relation("SubCategories")
+
+  isSystem  Boolean @default(false)
+  sortOrder Int     @default(0)
+
+  splits Split[]
+  rules  Rule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, parentId])
+}
+
+model Rule {
+  id       String  @id @default(cuid())
+  name     String
+  priority Int     @default(100)
+  enabled  Boolean @default(true)
+
+  matchField String
+  operator   String
+  value      String
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  markTransfer Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([priority])
+}
+
+model FeedConnection {
+  id           String   @id @default(cuid())
+  provider     String   @default("simplefin")
+
+  accessUrlEnc String
+
+  status       String    @default("connected")
+  lastSyncedAt DateTime?
+  lastError    String?
+
+  accounts  Account[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ImportBatch {
+  id        String   @id @default(cuid())
+  source    String
+  startedAt DateTime @default(now())
+  imported  Int      @default(0)
+  skipped   Int      @default(0)
+  note      String   @default("")
+
+  transactions Transaction[]
+}

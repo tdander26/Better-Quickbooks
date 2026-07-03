@@ -3,6 +3,9 @@
 /.pnp
 .pnp.js
 
+# netlify
+.netlify
+
 # next.js
 /.next/
 /out/
