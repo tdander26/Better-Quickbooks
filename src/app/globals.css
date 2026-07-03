@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --border: #e7e9ee;
+  --text: #1a1d23;
+  --muted: #6b7280;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --border: #262b35;
+    --text: #e9ebef;
+    --muted: #9aa2b1;
+  }
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border shadow-sm;
+    background: var(--card);
+    border-color: var(--border);
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn text-white;
+    background: linear-gradient(180deg, #18b463, #0c924f);
+  }
+  .btn-ghost {
+    @apply btn border;
+    border-color: var(--border);
+    background: transparent;
+  }
+  .btn-ghost:hover {
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+  }
+  .input {
+    @apply w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2;
+    background: var(--card);
+    border-color: var(--border);
+  }
+  .input:focus {
+    --tw-ring-color: #3fce7f66;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium;
+  }
+}
+
+/* Hide scrollbars on horizontal scroll containers but keep functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

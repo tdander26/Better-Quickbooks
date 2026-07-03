@@ -1,0 +1,177 @@
+// Better-QuickBooks data model.
+//
+// Local dev uses SQLite (zero setup). For production on Vercel + Neon/Supabase,
+// change `provider` to "postgresql" — every field below is Postgres-portable
+// (no SQLite-only types; string fields instead of native enums so the schema
+// migrates cleanly to either database).
+//
+// Money is ALWAYS stored as integer cents (Int) to avoid floating-point errors.
+// String "enum" fields use the TS union types in src/lib/types.ts as the source
+// of truth for allowed values, validated with zod at the edges.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// A real-world financial account (a bank checking account or a credit card).
+model Account {
+  id             String   @id @default(cuid())
+  name           String
+  institution    String   // "Chase", "Ally", etc.
+  type           String   // AccountType: "bank" | "credit_card"
+  classification String   // AccountClass: "asset" | "liability"
+  currency       String   @default("USD")
+
+  // Opening balance anchors the ledger; running balance = opening + sum(txn amounts).
+  openingBalanceCents Int      @default(0)
+  openingDate         DateTime @default(now())
+
+  // Authoritative figures reported by the bank via SimpleFIN (for reconciliation).
+  reportedBalanceCents Int?
+  balanceDate          DateTime? // SimpleFIN "balance-date" (bank's true as-of date)
+
+  // Feed linkage. simplefinAccountId is the provider's stable account id.
+  simplefinAccountId String? @unique
+  connectionId       String?
+  connection         FeedConnection? @relation(fields: [connectionId], references: [id])
+
+  archived  Boolean  @default(false)
+  sortOrder Int      @default(0)
+
+  transactions Transaction[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+/// A single transaction on one account. Positive amount = inflow, negative = outflow
+/// (matching SimpleFIN's convention). Sum of its splits always equals `amountCents`.
+model Transaction {
+  id             String   @id @default(cuid())
+  accountId      String
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  postedAt       DateTime
+  amountCents    Int
+  payee          String   @default("")   // cleaned merchant / counterparty
+  description    String   @default("")    // original feed text (SimpleFIN description)
+  memo           String   @default("")
+  pending        Boolean  @default(false)
+
+  providerTxnId  String?  @unique         // SimpleFIN transaction id -> dedupe
+  importBatchId  String?
+  importBatch    ImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  transferId     String?                  // links the two sides of an internal transfer
+  reviewed       Boolean  @default(false) // user has confirmed the categorization
+  notes          String   @default("")
+
+  splits    Split[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId, postedAt])
+  @@index([transferId])
+}
+
+/// One line of a transaction's categorization. A simple transaction has exactly
+/// one split; a split transaction has several whose amounts sum to the parent.
+model Split {
+  id            String   @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  amountCents Int
+  memo        String  @default("")
+
+  @@index([categoryId])
+  @@index([transactionId])
+}
+
+/// The chart of accounts. `section` places each category in the correct report:
+/// INCOME/EXPENSE -> Profit & Loss; ASSET/LIABILITY/EQUITY -> Balance Sheet;
+/// TRANSFER -> excluded from both (internal money movement).
+model Category {
+  id       String  @id @default(cuid())
+  name     String
+  section  String  // Section: "income" | "expense" | "asset" | "liability" | "equity" | "transfer"
+  icon     String  @default("")
+  color    String  @default("")
+
+  parentId String?
+  parent   Category?  @relation("SubCategories", fields: [parentId], references: [id])
+  children Category[] @relation("SubCategories")
+
+  isSystem  Boolean @default(false) // seeded categories that shouldn't be deleted (e.g. Uncategorized)
+  sortOrder Int     @default(0)
+
+  splits Split[]
+  rules  Rule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, parentId])
+}
+
+/// A categorization rule. On import (and on demand) transactions are matched
+/// against enabled rules ordered by `priority` (lower runs first); the first
+/// match assigns `category`. Designed so users can add their own rules later.
+model Rule {
+  id       String  @id @default(cuid())
+  name     String
+  priority Int     @default(100)
+  enabled  Boolean @default(true)
+
+  matchField String // MatchField: "payee" | "description" | "amount" | "account"
+  operator   String // Operator: "contains" | "equals" | "starts_with" | "ends_with" | "regex" | "gt" | "lt"
+  value      String
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  markTransfer Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([priority])
+}
+
+/// A connection to a bank-feed provider. v1 supports SimpleFIN; the provider
+/// field + pluggable FeedProvider interface (src/lib/feeds) allow Teller later.
+model FeedConnection {
+  id           String   @id @default(cuid())
+  provider     String   @default("simplefin") // Provider: "simplefin" | "teller"
+
+  // The SimpleFIN access URL (https://user:pass@host/path) is encrypted at rest
+  // with AES-256-GCM (see src/lib/crypto.ts). Never stored in plaintext.
+  accessUrlEnc String
+
+  status       String    @default("connected")
+  lastSyncedAt DateTime?
+  lastError    String?
+
+  accounts  Account[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Records one import run (SimpleFIN refresh or CSV upload) for auditability.
+model ImportBatch {
+  id        String   @id @default(cuid())
+  source    String   // "simplefin" | "csv"
+  startedAt DateTime @default(now())
+  imported  Int      @default(0)
+  skipped   Int      @default(0)
+  note      String   @default("")
+
+  transactions Transaction[]
+}
