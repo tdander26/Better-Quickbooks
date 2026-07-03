@@ -57,14 +57,17 @@ function buildWhere(params: URLSearchParams): Prisma.TransactionWhereInput {
   const start = parseDate(params.get("start"));
   const end = parseDate(params.get("end"));
   if (start || end) {
-    const postedAt: Prisma.DateTimeFilter = {};
-    if (start) postedAt.gte = start;
+    let endOfDay: Date | null = null;
     if (end) {
-      const e = new Date(end);
-      e.setHours(23, 59, 59, 999);
-      postedAt.lte = e;
+      endOfDay = new Date(end);
+      endOfDay.setHours(23, 59, 59, 999);
     }
-    and.push({ postedAt });
+    and.push({
+      postedAt: {
+        ...(start ? { gte: start } : {}),
+        ...(endOfDay ? { lte: endOfDay } : {}),
+      },
+    });
   }
 
   return and.length ? { AND: and } : {};

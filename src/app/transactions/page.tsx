@@ -72,14 +72,17 @@ export default async function TransactionsPage({
   }
 
   if (start || end) {
-    const postedAt: Prisma.DateTimeFilter = {};
-    if (start) postedAt.gte = start;
+    let endOfDay: Date | null = null;
     if (end) {
-      const e = new Date(end);
-      e.setHours(23, 59, 59, 999); // include the whole end day
-      postedAt.lte = e;
+      endOfDay = new Date(end);
+      endOfDay.setHours(23, 59, 59, 999); // include the whole end day
     }
-    and.push({ postedAt });
+    and.push({
+      postedAt: {
+        ...(start ? { gte: start } : {}),
+        ...(endOfDay ? { lte: endOfDay } : {}),
+      },
+    });
   }
 
   const where: Prisma.TransactionWhereInput = and.length ? { AND: and } : {};
