@@ -10,9 +10,10 @@
 
 generator client {
   provider      = "prisma-client-js"
-  // Cover Netlify's build image (native) and both possible Lambda runtimes
-  // (Amazon Linux 2 = openssl 1.0.x, AL2023 = openssl 3.0.x).
-  binaryTargets = ["native", "rhel-openssl-1.0.x", "rhel-openssl-3.0.x"]
+  // Netlify's build image (native) + its Functions runtime (Amazon Linux 2023,
+  // openssl 3.0). rhel-openssl-1.0.x was dropped — its engine download can 404
+  // and fail `prisma generate` at build time.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
