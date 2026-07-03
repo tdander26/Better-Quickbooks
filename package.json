@@ -17,6 +17,7 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@netlify/database": "^1.1.0",
     "@prisma/client": "^6.1.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",

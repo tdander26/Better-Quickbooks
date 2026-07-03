@@ -9,6 +9,10 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, statusBarStyle: "default", title: "Better Books" },
 };
 
+// This app is entirely data-backed; never prerender pages at build time (the
+// database is provisioned/migrated by Netlify only around deploy, not build).
+export const dynamic = "force-dynamic";
+
 export const viewport: Viewport = {
   themeColor: "#18b463",
   width: "device-width",
