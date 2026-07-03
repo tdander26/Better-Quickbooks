@@ -5,7 +5,9 @@
 
 [build]
   command = "prisma generate --schema prisma/schema.prod.prisma && next build"
-  # No `publish` — the Next.js runtime plugin sets the publish directory itself.
+  # Must be the Next build output dir, NOT the repo root — the Next.js plugin
+  # rejects a publish dir equal to the base directory.
+  publish = ".next"
 
 [build.environment]
   NODE_VERSION = "20"
