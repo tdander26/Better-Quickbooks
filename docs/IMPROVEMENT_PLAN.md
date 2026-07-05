@@ -18,9 +18,20 @@ Organized into phases; each phase ships independently.
     review, Uncategorized, Pending, Transfer (linked/unmatched), Split, Recurring,
     Possible duplicate, Large ($5k) — on the table + mobile cards, with detectors
     in `src/lib/badge-context.ts`. Verified with tests + screenshots.
-- ⏭️ **Next up:** Phase 2 QoL (create-rule-from-transaction, undo, report
-  drill-down, date groups) then Phase 3 parity (reconciliation, attachments,
-  recurring page). Invoices deprioritized per owner.
+- ✅ **Phase 2 (QoL)** and ✅ **Phase 3 (parity)** — largely SHIPPED:
+  - Reports: account filter, per-line **drill-down** to transactions, **prior-period
+    comparison** column, **monthly P&L grid**, balance-sheet **as-of** date, CSV export honoring filters.
+  - **Reconciliation** workflow: `/reconcile` account picker → clear transactions to a
+    statement until difference is $0 → finalize (marks reconciled, records a Statement).
+  - **Budgets**: `/budgets` monthly budget-vs-actual per category with progress bars.
+  - **Recurring**: `/recurring` detects series (cadence, avg, next-expected, overdue/due-soon).
+  - **Import history**: `/imports`. **Tax summary**: `/tax` (categories mapped to Schedule C lines, seeded).
+  - **Receipts/attachments** on transactions (inline in the details modal; stored in-DB, portable).
+  - **Create rule from a transaction** (⋯ menu) + apply now. Category **tax-line** editable via API.
+  - Expanded navigation (desktop sidebar + 5-tab mobile), account-detail **Reconcile** button.
+- ⏭️ **Remaining polish:** undo on delete/bulk, date-group headers + keyboard nav in the
+  register, drag-reorder/archive-in-UI for accounts, payee normalization, budgets dashboard tile,
+  Settings tax-line editor UI, Teller provider. Invoices deprioritized per owner.
 
 ---
 

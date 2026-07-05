@@ -13,6 +13,11 @@ import {
   Filter,
   Settings,
   Wallet,
+  CheckCircle2,
+  PiggyBank,
+  Repeat,
+  Receipt,
+  History,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -20,14 +25,25 @@ const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/accounts", label: "Accounts", icon: Landmark },
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
+  { href: "/reconcile", label: "Reconcile", icon: CheckCircle2 },
+  { href: "/budgets", label: "Budgets", icon: PiggyBank },
   { href: "/reports", label: "Reports", icon: BarChart3 },
+  { href: "/recurring", label: "Recurring", icon: Repeat },
+  { href: "/tax", label: "Tax", icon: Receipt },
+  { href: "/imports", label: "Imports", icon: History },
   { href: "/rules", label: "Rules", icon: Filter },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-// The four most-used destinations get the mobile bottom bar; the rest live under
-// Settings / are reachable from the dashboard.
-const MOBILE_NAV = [NAV[0], NAV[2], NAV[3], NAV[5]];
+// The five most-used destinations get the mobile bottom bar; the rest are
+// reachable from the desktop sidebar and in-page links.
+const MOBILE_NAV = [
+  NAV[0], // Dashboard
+  NAV[2], // Transactions
+  NAV[4], // Budgets
+  NAV[5], // Reports
+  NAV[10], // Settings
+];
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
@@ -98,7 +114,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Mobile bottom nav */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t backdrop-blur md:hidden"
+        className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t backdrop-blur md:hidden"
         style={{ borderColor: "var(--border)", background: "color-mix(in srgb, var(--bg) 92%, transparent)" }}
       >
         {MOBILE_NAV.map((item) => {

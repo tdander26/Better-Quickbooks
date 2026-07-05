@@ -86,18 +86,29 @@ export interface ProfitAndLoss {
   netIncomeCents: number;
 }
 
-async function splitsInRange(start: Date, end: Date) {
+async function splitsInRange(start: Date, end: Date, accountId?: string) {
   return prisma.split.findMany({
     where: {
-      transaction: { postedAt: { gte: start, lte: end }, account: { archived: false } },
+      transaction: {
+        postedAt: { gte: start, lte: end },
+        account: { archived: false },
+        ...(accountId ? { accountId } : {}),
+      },
     },
     include: { category: true },
   });
 }
 
-/** Profit & Loss for a date range. */
-export async function profitAndLoss(start: Date, end: Date): Promise<ProfitAndLoss> {
-  const splits = await splitsInRange(start, end);
+/**
+ * Profit & Loss for a date range. Pass `accountId` to restrict the statement to
+ * a single account's transactions (splits of other accounts are excluded).
+ */
+export async function profitAndLoss(
+  start: Date,
+  end: Date,
+  accountId?: string
+): Promise<ProfitAndLoss> {
+  const splits = await splitsInRange(start, end, accountId);
   const incomeMap = new Map<string, ReportLine>();
   const expenseMap = new Map<string, ReportLine>();
 
@@ -165,15 +176,158 @@ export async function spendingByCategory(start: Date, end: Date): Promise<Report
   return pl.expenses;
 }
 
-/** Cash flow: net change grouped by category (income positive, expense negative). */
-export async function cashFlow(start: Date, end: Date) {
-  const pl = await profitAndLoss(start, end);
+/**
+ * Cash flow: net change grouped by category (income positive, expense negative).
+ * Pass `accountId` to restrict to a single account's transactions.
+ */
+export async function cashFlow(start: Date, end: Date, accountId?: string) {
+  const pl = await profitAndLoss(start, end, accountId);
   return {
     start,
     end,
     inflows: pl.income,
     outflows: pl.expenses,
     netCents: pl.netIncomeCents,
+  };
+}
+
+/**
+ * Computed running balance per (non-archived) account, counting only
+ * transactions posted on/before `asOf`. Used for a point-in-time balance sheet.
+ */
+export async function accountBalancesAsOf(asOf: Date): Promise<AccountBalance[]> {
+  const accounts = await prisma.account.findMany({
+    where: { archived: false },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+  });
+  const sums = await prisma.transaction.groupBy({
+    by: ["accountId"],
+    where: { postedAt: { lte: asOf } },
+    _sum: { amountCents: true },
+  });
+  const sumByAccount = new Map(sums.map((s) => [s.accountId, s._sum.amountCents ?? 0]));
+
+  return accounts.map((a) => ({
+    id: a.id,
+    name: a.name,
+    institution: a.institution,
+    type: a.type,
+    classification: a.classification,
+    computedCents: a.openingBalanceCents + (sumByAccount.get(a.id) ?? 0),
+    reportedCents: a.reportedBalanceCents ?? null,
+    balanceDate: a.balanceDate ?? null,
+  }));
+}
+
+/**
+ * Balance Sheet as of a specific date: asset / liability / equity positions using
+ * only transactions posted on/before `asOf`.
+ */
+export async function balanceSheetAsOf(asOf: Date): Promise<BalanceSheet> {
+  const balances = await accountBalancesAsOf(asOf);
+  const assets = balances.filter((b) => b.classification === "asset");
+  const liabilities = balances.filter((b) => b.classification === "liability");
+  const totalAssetsCents = assets.reduce((n, b) => n + b.computedCents, 0);
+  const totalLiabilitiesCents = liabilities.reduce((n, b) => n + -b.computedCents, 0);
+  return {
+    asOf,
+    assets,
+    liabilities,
+    totalAssetsCents,
+    totalLiabilitiesCents,
+    equityCents: totalAssetsCents - totalLiabilitiesCents,
+  };
+}
+
+export interface MonthlyCategoryRow {
+  categoryId: string | null;
+  category: string;
+  section: "income" | "expense";
+  values: Record<string, number>; // month key ("2026-01") -> cents (positive magnitude)
+  totalCents: number;
+}
+
+export interface MonthlyByCategory {
+  months: { key: string; label: string }[]; // chronological, oldest -> newest
+  income: MonthlyCategoryRow[];
+  expenses: MonthlyCategoryRow[];
+  incomeTotals: Record<string, number>; // per-month income subtotal
+  expenseTotals: Record<string, number>; // per-month expense subtotal
+  netByMonth: Record<string, number>; // per-month net income
+  totalIncomeCents: number;
+  totalExpenseCents: number;
+  netIncomeCents: number;
+}
+
+/**
+ * Per-category income & expense totals for each of the last N months — the data
+ * behind a P&L-by-month grid. Each row carries a value per month key plus a row
+ * total; column subtotals and a net-income-by-month row are precomputed.
+ */
+export async function monthlyByCategory(months = 6): Promise<MonthlyByCategory> {
+  const now = new Date();
+  const monthDefs = [] as { key: string; label: string; start: Date; end: Date }[];
+  for (let i = months - 1; i >= 0; i--) {
+    const d = subMonths(now, i);
+    monthDefs.push({
+      key: format(d, "yyyy-MM"),
+      label: format(d, "MMM"),
+      start: startOfMonth(d),
+      end: endOfMonth(d),
+    });
+  }
+
+  const incomeMap = new Map<string, MonthlyCategoryRow>();
+  const expenseMap = new Map<string, MonthlyCategoryRow>();
+  const incomeTotals: Record<string, number> = {};
+  const expenseTotals: Record<string, number> = {};
+  const netByMonth: Record<string, number> = {};
+
+  const upsert = (
+    map: Map<string, MonthlyCategoryRow>,
+    section: "income" | "expense",
+    line: ReportLine,
+    monthKey: string
+  ) => {
+    const key = line.categoryId ?? "uncategorized";
+    const row =
+      map.get(key) ??
+      ({ categoryId: line.categoryId, category: line.category, section, values: {}, totalCents: 0 } as MonthlyCategoryRow);
+    row.values[monthKey] = (row.values[monthKey] ?? 0) + line.amountCents;
+    row.totalCents += line.amountCents;
+    map.set(key, row);
+  };
+
+  for (const m of monthDefs) {
+    incomeTotals[m.key] = 0;
+    expenseTotals[m.key] = 0;
+    const pl = await profitAndLoss(m.start, m.end);
+    for (const l of pl.income) {
+      upsert(incomeMap, "income", l, m.key);
+      incomeTotals[m.key] += l.amountCents;
+    }
+    for (const l of pl.expenses) {
+      upsert(expenseMap, "expense", l, m.key);
+      expenseTotals[m.key] += l.amountCents;
+    }
+    netByMonth[m.key] = incomeTotals[m.key] - expenseTotals[m.key];
+  }
+
+  const income = [...incomeMap.values()].sort((a, b) => b.totalCents - a.totalCents);
+  const expenses = [...expenseMap.values()].sort((a, b) => b.totalCents - a.totalCents);
+  const totalIncomeCents = income.reduce((n, r) => n + r.totalCents, 0);
+  const totalExpenseCents = expenses.reduce((n, r) => n + r.totalCents, 0);
+
+  return {
+    months: monthDefs.map((m) => ({ key: m.key, label: m.label })),
+    income,
+    expenses,
+    incomeTotals,
+    expenseTotals,
+    netByMonth,
+    totalIncomeCents,
+    totalExpenseCents,
+    netIncomeCents: totalIncomeCents - totalExpenseCents,
   };
 }
 
