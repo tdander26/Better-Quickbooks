@@ -43,6 +43,7 @@ model Account {
   sortOrder Int      @default(0)
 
   transactions Transaction[]
+  statements   Statement[]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
@@ -65,14 +66,19 @@ model Transaction {
 
   transferId    String?
   reviewed      Boolean  @default(false)
+  categorizedBy String?
+  clearedStatus String   @default("uncleared")
+  reconciledAt  DateTime?
   notes         String   @default("")
 
-  splits    Split[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  splits      Split[]
+  attachments Attachment[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([accountId, postedAt])
   @@index([transferId])
+  @@index([accountId, amountCents, postedAt])
 }
 
 model Split {
@@ -83,8 +89,9 @@ model Split {
   categoryId String?
   category   Category? @relation(fields: [categoryId], references: [id])
 
-  amountCents Int
-  memo        String  @default("")
+  amountCents   Int
+  memo          String  @default("")
+  matchedRuleId String?
 
   @@index([categoryId])
   @@index([transactionId])
@@ -96,6 +103,7 @@ model Category {
   section  String
   icon     String  @default("")
   color    String  @default("")
+  taxLine  String  @default("")
 
   parentId String?
   parent   Category?  @relation("SubCategories", fields: [parentId], references: [id])
@@ -104,8 +112,9 @@ model Category {
   isSystem  Boolean @default(false)
   sortOrder Int     @default(0)
 
-  splits Split[]
-  rules  Rule[]
+  splits  Split[]
+  rules   Rule[]
+  budgets Budget[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -127,6 +136,9 @@ model Rule {
   category   Category @relation(fields: [categoryId], references: [id])
 
   markTransfer Boolean @default(false)
+
+  matchCount    Int      @default(0)
+  lastMatchedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -158,4 +170,42 @@ model ImportBatch {
   note      String   @default("")
 
   transactions Transaction[]
+}
+
+model Attachment {
+  id            String      @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  filename      String
+  mimeType      String
+  sizeBytes     Int
+  dataBase64    String
+  createdAt     DateTime    @default(now())
+
+  @@index([transactionId])
+}
+
+model Budget {
+  id          String   @id @default(cuid())
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  month       String
+  amountCents Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([categoryId, month])
+}
+
+model Statement {
+  id                 String   @id @default(cuid())
+  accountId          String
+  account            Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  endDate            DateTime
+  endingBalanceCents Int
+  transactionCount   Int      @default(0)
+  reconciledAt       DateTime @default(now())
+  createdAt          DateTime @default(now())
+
+  @@index([accountId])
 }

@@ -367,6 +367,7 @@ export function Cockpit({ data }: { data: CockpitData }) {
         <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {NAV.map((item) => {
             const active = isActive(pathname, item.href);
+            const Icon = item.icon;
             return (
               <Link
                 key={item.href}
@@ -389,7 +390,10 @@ export function Cockpit({ data }: { data: CockpitData }) {
                   if (!active) e.currentTarget.style.background = "transparent";
                 }}
               >
-                <span>{item.label}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <Icon size={16} strokeWidth={active ? 2.25 : 1.75} />
+                  {item.label}
+                </span>
                 {item.hot && data.navBadge > 0 && (
                   <span
                     style={{

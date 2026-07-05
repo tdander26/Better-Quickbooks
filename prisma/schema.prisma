@@ -44,6 +44,7 @@ model Account {
   sortOrder Int      @default(0)
 
   transactions Transaction[]
+  statements   Statement[]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
@@ -68,14 +69,19 @@ model Transaction {
 
   transferId     String?                  // links the two sides of an internal transfer
   reviewed       Boolean  @default(false) // user has confirmed the categorization
+  categorizedBy  String?                  // "rule" | "manual" | "import" | null (uncategorized)
+  clearedStatus  String   @default("uncleared") // "uncleared" | "cleared" | "reconciled"
+  reconciledAt   DateTime?
   notes          String   @default("")
 
-  splits    Split[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  splits      Split[]
+  attachments Attachment[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([accountId, postedAt])
   @@index([transferId])
+  @@index([accountId, amountCents, postedAt]) // duplicate detection
 }
 
 /// One line of a transaction's categorization. A simple transaction has exactly
@@ -88,8 +94,9 @@ model Split {
   categoryId String?
   category   Category? @relation(fields: [categoryId], references: [id])
 
-  amountCents Int
-  memo        String  @default("")
+  amountCents   Int
+  memo          String  @default("")
+  matchedRuleId String?         // which Rule auto-assigned this split's category (provenance)
 
   @@index([categoryId])
   @@index([transactionId])
@@ -104,6 +111,7 @@ model Category {
   section  String  // Section: "income" | "expense" | "asset" | "liability" | "equity" | "transfer"
   icon     String  @default("")
   color    String  @default("")
+  taxLine  String  @default("") // optional Schedule C / tax-form line mapping
 
   parentId String?
   parent   Category?  @relation("SubCategories", fields: [parentId], references: [id])
@@ -112,8 +120,9 @@ model Category {
   isSystem  Boolean @default(false) // seeded categories that shouldn't be deleted (e.g. Uncategorized)
   sortOrder Int     @default(0)
 
-  splits Split[]
-  rules  Rule[]
+  splits  Split[]
+  rules   Rule[]
+  budgets Budget[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -138,6 +147,9 @@ model Rule {
   category   Category @relation(fields: [categoryId], references: [id])
 
   markTransfer Boolean @default(false)
+
+  matchCount    Int      @default(0) // how many transactions this rule has categorized
+  lastMatchedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -174,4 +186,48 @@ model ImportBatch {
   note      String   @default("")
 
   transactions Transaction[]
+}
+
+/// A receipt or document attached to a transaction. Stored inline (base64) so it
+/// works on both SQLite (local) and Postgres (hosted) with no blob service.
+model Attachment {
+  id            String      @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  filename      String
+  mimeType      String
+  sizeBytes     Int
+  dataBase64    String
+  createdAt     DateTime    @default(now())
+
+  @@index([transactionId])
+}
+
+/// A monthly budget for one category. `month` is "YYYY-MM".
+model Budget {
+  id          String   @id @default(cuid())
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  month       String
+  amountCents Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([categoryId, month])
+}
+
+/// A completed bank reconciliation (statement) for an account. Individual
+/// transactions carry clearedStatus/reconciledAt; this records the statement it
+/// was reconciled against.
+model Statement {
+  id                 String   @id @default(cuid())
+  accountId          String
+  account            Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  endDate            DateTime
+  endingBalanceCents Int
+  transactionCount   Int      @default(0)
+  reconciledAt       DateTime @default(now())
+  createdAt          DateTime @default(now())
+
+  @@index([accountId])
 }

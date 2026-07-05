@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 import { parseISO, endOfDay, startOfYear, format } from "date-fns";
 import { prisma } from "@/lib/db";
 import { requireAuth } from "@/lib/session";
-import { profitAndLoss, balanceSheet, cashFlow } from "@/lib/reports";
+import { profitAndLoss, balanceSheetAsOf, cashFlow } from "@/lib/reports";
 import { UNCATEGORIZED } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -29,6 +29,16 @@ function resolveRange(url: URL) {
     if (!isNaN(p.getTime())) end = endOfDay(p);
   }
   return { start, end };
+}
+
+/** The point-in-time date for the balance sheet: end-inclusive, default today. */
+function resolveAsOf(url: URL): Date {
+  const a = url.searchParams.get("asOf");
+  if (a) {
+    const p = parseISO(a);
+    if (!isNaN(p.getTime())) return endOfDay(p);
+  }
+  return new Date();
 }
 
 /** RFC-4180-ish escaping: quote a cell when it contains a comma, quote or newline. */
@@ -57,12 +67,13 @@ export async function GET(req: NextRequest) {
       ? typeParam
       : "pl";
   const { start, end } = resolveRange(url);
+  const accountId = url.searchParams.get("account") || undefined;
 
   const rows: (string | number)[][] = [];
   let name = "report";
 
   if (type === "pl") {
-    const pl = await profitAndLoss(start, end);
+    const pl = await profitAndLoss(start, end, accountId);
     name = "profit-and-loss";
     rows.push(["Section", "Category", "Amount"]);
     for (const l of pl.income) rows.push(["Income", l.category, money(l.amountCents)]);
@@ -71,7 +82,7 @@ export async function GET(req: NextRequest) {
     rows.push(["Expense", "Total expenses", money(pl.totalExpenseCents)]);
     rows.push(["Net", "Net income", money(pl.netIncomeCents)]);
   } else if (type === "cashflow") {
-    const cf = await cashFlow(start, end);
+    const cf = await cashFlow(start, end, accountId);
     const totalIn = cf.inflows.reduce((n, l) => n + l.amountCents, 0);
     const totalOut = cf.outflows.reduce((n, l) => n + l.amountCents, 0);
     name = "cash-flow";
@@ -82,7 +93,7 @@ export async function GET(req: NextRequest) {
     rows.push(["Money Out", "Total out", money(totalOut)]);
     rows.push(["Net", "Net change", money(cf.netCents)]);
   } else if (type === "balance") {
-    const bs = await balanceSheet();
+    const bs = await balanceSheetAsOf(resolveAsOf(url));
     name = "balance-sheet";
     rows.push(["Section", "Account", "Institution", "Amount"]);
     for (const a of bs.assets) rows.push(["Asset", a.name, a.institution, money(a.computedCents)]);
@@ -94,7 +105,11 @@ export async function GET(req: NextRequest) {
   } else {
     // transactions — the full register for the range (one row per transaction).
     const txns = await prisma.transaction.findMany({
-      where: { postedAt: { gte: start, lte: end }, account: { archived: false } },
+      where: {
+        postedAt: { gte: start, lte: end },
+        account: { archived: false },
+        ...(accountId ? { accountId } : {}),
+      },
       orderBy: [{ postedAt: "asc" }, { createdAt: "asc" }],
       include: { account: true, splits: { include: { category: true } } },
     });

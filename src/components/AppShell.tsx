@@ -10,30 +10,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { clsx } from "clsx";
-import {
-  LayoutDashboard,
-  ListChecks,
-  ArrowLeftRight,
-  Landmark,
-  BarChart3,
-  Filter,
-  Settings,
-  type LucideIcon,
-} from "lucide-react";
-import { NAV, isActive } from "@/components/nav";
-
-// Icons for the mobile bottom bar (the desktop rail is text-only, per the spec).
-const ICONS: Record<string, LucideIcon> = {
-  "/": LayoutDashboard,
-  "/categorize": ListChecks,
-  "/transactions": ArrowLeftRight,
-  "/accounts": Landmark,
-  "/reports": BarChart3,
-  "/rules": Filter,
-  "/settings": Settings,
-};
-
-const MOBILE_NAV = [NAV[1], NAV[0], NAV[2], NAV[4]]; // Categorize, Overview, Transactions, Reports
+import { NAV, MOBILE_NAV, isActive } from "@/components/nav";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -64,6 +41,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav className="flex flex-col gap-0.5">
           {NAV.map((item) => {
             const active = isActive(pathname, item.href);
+            const Icon = item.icon;
             return (
               <Link
                 key={item.href}
@@ -77,7 +55,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                   background: active ? "#EFEAE0" : "transparent",
                 }}
               >
-                <span>{item.label}</span>
+                <span className="flex items-center gap-2.5">
+                  <Icon size={16} strokeWidth={active ? 2.25 : 1.75} />
+                  {item.label}
+                </span>
                 {item.hot && badge > 0 && (
                   <span
                     className="rounded-full px-[7px] py-px text-[11px] font-semibold"
@@ -118,12 +99,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Mobile bottom nav */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t backdrop-blur md:hidden"
+        className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t backdrop-blur md:hidden"
         style={{ borderColor: "var(--border)", background: "color-mix(in srgb, var(--bg) 92%, transparent)" }}
       >
         {MOBILE_NAV.map((item) => {
           const active = isActive(pathname, item.href);
-          const Icon = ICONS[item.href] ?? LayoutDashboard;
+          const Icon = item.icon;
           return (
             <Link
               key={item.href}

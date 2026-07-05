@@ -5,6 +5,8 @@
 import { prisma } from "@/lib/db";
 import { UNCATEGORIZED } from "@/lib/types";
 import { PageHeader } from "@/components/ui";
+import { buildBadgeContext } from "@/lib/badge-context";
+import { transactionBadges } from "@/lib/badges";
 import type { Prisma } from "@prisma/client";
 import {
   TransactionsTable,
@@ -106,6 +108,17 @@ export default async function TransactionsPage({
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  // Smart-badge context (recurring payees, duplicates, transfer linkage, rules).
+  const badgeCtx = await buildBadgeContext(
+    txns.map((t) => ({
+      id: t.id,
+      accountId: t.accountId,
+      amountCents: t.amountCents,
+      postedAt: t.postedAt,
+      transferId: t.transferId,
+    }))
+  );
+
   // Serialize into plain, client-safe shapes.
   const rows: TxnRow[] = txns.map((t) => ({
     id: t.id,
@@ -126,6 +139,22 @@ export default async function TransactionsPage({
       amountCents: s.amountCents,
       memo: s.memo,
     })),
+    badges: transactionBadges(
+      {
+        id: t.id,
+        amountCents: t.amountCents,
+        payee: t.payee,
+        pending: t.pending,
+        reviewed: t.reviewed,
+        transferId: t.transferId,
+        categorizedBy: t.categorizedBy,
+        splits: t.splits.map((s) => ({
+          matchedRuleId: s.matchedRuleId,
+          categoryName: s.category?.name ?? null,
+        })),
+      },
+      badgeCtx
+    ),
   }));
 
   const categoryOptions: CategoryOption[] = categories.map((c) => ({

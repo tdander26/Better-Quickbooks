@@ -45,6 +45,9 @@ import {
 } from "@/lib/types";
 import { formatMoney, toCents } from "@/lib/money";
 import { Money, EmptyState } from "@/components/ui";
+import { TxnBadges } from "@/components/TxnBadges";
+import { AttachmentPanel } from "@/components/AttachmentPanel";
+import type { Badge } from "@/lib/badges";
 
 // ---------------------------------------------------------------------------
 // Shared shapes (also consumed by page.tsx)
@@ -71,6 +74,7 @@ export interface TxnRow {
   reviewed: boolean;
   transferId: string | null;
   splits: TxnSplit[];
+  badges: Badge[];
 }
 
 export interface CategoryOption {
@@ -199,6 +203,7 @@ export function TransactionsTable({
   const [splitFor, setSplitFor] = useState<TxnRow | null>(null);
   const [detailsFor, setDetailsFor] = useState<TxnRow | null>(null);
   const [actionsFor, setActionsFor] = useState<TxnRow | null>(null);
+  const [ruleFor, setRuleFor] = useState<TxnRow | null>(null);
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; tone: "ok" | "err" } | null>(null);
@@ -850,15 +855,11 @@ export function TransactionsTable({
                         {format(parseISO(t.postedAt), "MMM d, yyyy")}
                       </td>
                       <td className="px-3 py-3 align-middle">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium">
                             {t.payee || t.description || "—"}
                           </span>
-                          {t.pending && (
-                            <span className="chip bg-amber-500/15 text-amber-700 dark:text-amber-300">
-                              Pending
-                            </span>
-                          )}
+                          <TxnBadges badges={t.badges} />
                         </div>
                         {t.description && t.description !== t.payee && (
                           <div className="muted mt-0.5 max-w-[26ch] truncate text-xs">
@@ -916,12 +917,8 @@ export function TransactionsTable({
                         </span>
                         <span aria-hidden>·</span>
                         <span className="truncate">{t.accountName}</span>
-                        {t.pending && (
-                          <span className="chip bg-amber-500/15 text-amber-700 dark:text-amber-300">
-                            Pending
-                          </span>
-                        )}
                       </div>
+                      <TxnBadges badges={t.badges} className="mt-1.5" />
                     </div>
                   </div>
                   <div className="flex items-center gap-2 pl-[26px]">
@@ -1093,6 +1090,11 @@ export function TransactionsTable({
             setActionsFor(null);
             setDetailsFor(t);
           }}
+          onCreateRule={() => {
+            const t = actionsFor;
+            setActionsFor(null);
+            setRuleFor(t);
+          }}
           onTransfer={() => {
             const t = actionsFor;
             setActionsFor(null);
@@ -1113,6 +1115,19 @@ export function TransactionsTable({
               setActionsFor(null);
               void deleteTxn(t);
             }
+          }}
+        />
+      )}
+      {ruleFor && (
+        <CreateRuleModal
+          key={ruleFor.id}
+          txn={ruleFor}
+          groups={groupsForAssign}
+          onClose={() => setRuleFor(null)}
+          onResult={(msg, tone) => {
+            setRuleFor(null);
+            setToast({ msg, tone });
+            router.refresh();
           }}
         />
       )}
@@ -1620,6 +1635,11 @@ function DetailsModal({
           />
         </label>
 
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-medium">Receipts &amp; documents</span>
+          <AttachmentPanel transactionId={txn.id} />
+        </div>
+
         {error && <p className="text-sm text-rose-500">{error}</p>}
 
         <div className="mt-1 flex items-center justify-end gap-2">
@@ -1643,6 +1663,7 @@ function ActionsSheet({
   onClose,
   onSplit,
   onDetails,
+  onCreateRule,
   onTransfer,
   onUnlink,
   onDelete,
@@ -1652,6 +1673,7 @@ function ActionsSheet({
   onClose: () => void;
   onSplit: () => void;
   onDetails: () => void;
+  onCreateRule: () => void;
   onTransfer: () => void;
   onUnlink: () => void;
   onDelete: () => void;
@@ -1693,6 +1715,12 @@ function ActionsSheet({
           </span>
           Edit payee &amp; notes
         </button>
+        <button type="button" className={rowClass} onClick={onCreateRule}>
+          <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-500/15 text-brand-600 dark:text-brand-400">
+            <Wand2 size={16} />
+          </span>
+          Create rule from this
+        </button>
         <button
           type="button"
           className={clsx(rowClass, "text-rose-600 dark:text-rose-400")}
@@ -1704,6 +1732,98 @@ function ActionsSheet({
           Delete transaction
         </button>
       </div>
+    </ModalShell>
+  );
+}
+
+// --- Create rule from a transaction ----------------------------------------
+
+function CreateRuleModal({
+  txn,
+  groups,
+  onClose,
+  onResult,
+}: {
+  txn: TxnRow;
+  groups: CatGroup[];
+  onClose: () => void;
+  onResult: (msg: string, tone: "ok" | "err") => void;
+}) {
+  const [value, setValue] = useState((txn.payee || txn.description || "").trim());
+  const [categoryId, setCategoryId] = useState(txn.splits[0]?.categoryId ?? "");
+  const [reapply, setReapply] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    if (!value.trim()) return setError("Enter some text to match on.");
+    if (!categoryId) return setError("Pick a category for the rule.");
+    setSaving(true);
+    try {
+      const res = await fetch("/api/rules", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: `Payee contains "${value.trim()}"`,
+          matchField: "payee",
+          operator: "contains",
+          value: value.trim(),
+          categoryId,
+          priority: 100,
+        }),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b.error || "Couldn't create the rule.");
+      }
+      if (reapply) await fetch("/api/rules/reapply", { method: "POST" }).catch(() => {});
+      onResult(reapply ? "Rule created and applied" : "Rule created", "ok");
+    } catch (err) {
+      setSaving(false);
+      setError(err instanceof Error ? err.message : "Couldn't create the rule.");
+    }
+  }
+
+  return (
+    <ModalShell
+      title="Create a rule"
+      subtitle="Auto-categorize future transactions like this one"
+      icon={Wand2}
+      onClose={onClose}
+    >
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">When the payee contains</span>
+          <input className="input" value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">Categorize as</span>
+          <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <option value="">Choose a category…</option>
+            <CategoryOptionGroups groups={groups} />
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-brand-500"
+            checked={reapply}
+            onChange={(e) => setReapply(e.target.checked)}
+          />
+          Also re-categorize matching transactions now
+        </label>
+        {error && <p className="text-sm text-rose-500">{error}</p>}
+        <div className="mt-1 flex items-center justify-end gap-2">
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="submit" className="btn-primary" disabled={saving}>
+            {saving ? <Loader2 size={16} className="animate-spin" /> : "Create rule"}
+          </button>
+        </div>
+      </form>
     </ModalShell>
   );
 }
