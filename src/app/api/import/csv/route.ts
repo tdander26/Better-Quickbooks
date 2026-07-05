@@ -8,7 +8,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAuth } from "@/lib/session";
 import { toCents } from "@/lib/money";
-import { categorize, type RuleLike } from "@/lib/categorize";
+import { categorize } from "@/lib/categorize";
+import { loadEnabledRules } from "@/lib/sync";
+import { linkTransfers } from "@/lib/transfers";
 import { UNCATEGORIZED, TRANSFER_CATEGORY } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -72,20 +74,6 @@ function findColumn(header: string[], names: string[]): number {
   return -1;
 }
 
-async function loadRules(): Promise<RuleLike[]> {
-  const rules = await prisma.rule.findMany({ where: { enabled: true } });
-  return rules.map((r) => ({
-    id: r.id,
-    enabled: r.enabled,
-    priority: r.priority,
-    matchField: r.matchField,
-    operator: r.operator,
-    value: r.value,
-    categoryId: r.categoryId,
-    markTransfer: r.markTransfer,
-  }));
-}
-
 export async function POST(req: NextRequest) {
   const denied = await requireAuth();
   if (denied) return denied;
@@ -123,7 +111,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const rules = await loadRules();
+  const rules = await loadEnabledRules();
   const [uncategorized, transfer] = await Promise.all([
     prisma.category.findFirst({ where: { name: UNCATEGORIZED } }),
     prisma.category.findFirst({ where: { name: TRANSFER_CATEGORY } }),
@@ -198,16 +186,19 @@ export async function POST(req: NextRequest) {
         payee: payee || description,
         description,
         importBatchId: batch.id,
-        splits: { create: [{ amountCents, categoryId }] },
+        categorizedBy: match ? "rule" : null,
+        splits: { create: [{ amountCents, categoryId, matchedRuleId: match?.ruleId ?? null }] },
       },
     });
     imported++;
   }
+
+  const { linked } = await linkTransfers();
 
   await prisma.importBatch.update({
     where: { id: batch.id },
     data: { imported, skipped },
   });
 
-  return NextResponse.json({ ok: true, imported, skipped, errors });
+  return NextResponse.json({ ok: true, imported, skipped, transfersLinked: linked, errors });
 }

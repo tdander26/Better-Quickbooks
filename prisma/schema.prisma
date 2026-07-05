@@ -68,6 +68,9 @@ model Transaction {
 
   transferId     String?                  // links the two sides of an internal transfer
   reviewed       Boolean  @default(false) // user has confirmed the categorization
+  categorizedBy  String?                  // "rule" | "manual" | "import" | null (uncategorized)
+  clearedStatus  String   @default("uncleared") // "uncleared" | "cleared" | "reconciled"
+  reconciledAt   DateTime?
   notes          String   @default("")
 
   splits    Split[]
@@ -76,6 +79,7 @@ model Transaction {
 
   @@index([accountId, postedAt])
   @@index([transferId])
+  @@index([accountId, amountCents, postedAt]) // duplicate detection
 }
 
 /// One line of a transaction's categorization. A simple transaction has exactly
@@ -88,8 +92,9 @@ model Split {
   categoryId String?
   category   Category? @relation(fields: [categoryId], references: [id])
 
-  amountCents Int
-  memo        String  @default("")
+  amountCents   Int
+  memo          String  @default("")
+  matchedRuleId String?         // which Rule auto-assigned this split's category (provenance)
 
   @@index([categoryId])
   @@index([transactionId])
@@ -138,6 +143,9 @@ model Rule {
   category   Category @relation(fields: [categoryId], references: [id])
 
   markTransfer Boolean @default(false)
+
+  matchCount    Int      @default(0) // how many transactions this rule has categorized
+  lastMatchedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

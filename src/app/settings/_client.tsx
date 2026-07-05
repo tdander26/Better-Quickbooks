@@ -36,6 +36,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { SECTIONS, SECTION_LABELS, type Section } from "@/lib/types";
+import { CategoryIcon } from "@/lib/icons";
 
 // ── Shared prop shapes (plain, server-serializable) ──────────────────────────
 export interface ConnectionInfo {
@@ -697,11 +698,9 @@ function CategoryRow({ category }: { category: CategoryLite }) {
 
   return (
     <div className="group flex items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: "var(--border)" }}>
-      {category.icon ? (
-        <span className="text-base leading-none">{category.icon}</span>
-      ) : (
-        <span className="h-2 w-2 shrink-0 rounded-full bg-brand-500/50" />
-      )}
+      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-gray-500 dark:text-gray-400">
+        <CategoryIcon name={category.icon} size={15} />
+      </span>
 
       {editing ? (
         <input
