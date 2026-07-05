@@ -2,62 +2,20 @@
 //   POST — decrypt the stored access URL, pull transactions since the last sync
 //   (with a 3-day overlap so nothing slips through), import + dedupe them, and
 //   report how many were new vs. skipped.
+//
+// The sync itself lives in src/lib/feeds/refresh.ts so the MCP server shares it.
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
 import { requireAuth } from "@/lib/session";
-import { getProvider } from "@/lib/feeds";
-import { decrypt } from "@/lib/crypto";
-import { importNormalizedAccounts } from "@/lib/sync";
+import { refreshFeeds, FeedRefreshError } from "@/lib/feeds/refresh";
 
 export const runtime = "nodejs";
-
-/** n days before `from`, without pulling in a date library. */
-function daysAgo(n: number, from: Date = new Date()): Date {
-  return new Date(from.getTime() - n * 24 * 60 * 60 * 1000);
-}
 
 export async function POST() {
   const denied = await requireAuth();
   if (denied) return denied;
 
-  const conn = await prisma.feedConnection.findFirst({ orderBy: { createdAt: "desc" } });
-  if (!conn) {
-    return NextResponse.json(
-      { error: "Not connected. Add your SimpleFIN setup token first." },
-      { status: 400 }
-    );
-  }
-
-  let accessUrl: string;
   try {
-    accessUrl = decrypt(conn.accessUrlEnc);
-  } catch {
-    return NextResponse.json(
-      { error: "Stored bank credentials couldn't be read. Please reconnect SimpleFIN." },
-      { status: 400 }
-    );
-  }
-
-  // Overlap the window by 3 days so transactions that posted late aren't missed;
-  // the importer dedupes by provider transaction id, so re-seeing them is safe.
-  const startDate = conn.lastSyncedAt ? daysAgo(3, conn.lastSyncedAt) : daysAgo(90);
-
-  const provider = getProvider("simplefin");
-  try {
-    const { accounts, errors } = await provider.fetch(accessUrl, { startDate, pending: true });
-    const summary = await importNormalizedAccounts(accounts, {
-      source: "simplefin",
-      connectionId: conn.id,
-      providerErrors: errors,
-    });
-    await prisma.feedConnection.update({
-      where: { id: conn.id },
-      data: {
-        lastSyncedAt: new Date(),
-        status: "connected",
-        lastError: errors.length ? errors.join("; ") : null,
-      },
-    });
+    const summary = await refreshFeeds();
     return NextResponse.json({
       ok: true,
       imported: summary.imported,
@@ -66,11 +24,10 @@ export async function POST() {
       errors: summary.errors,
     });
   } catch (e) {
+    if (e instanceof FeedRefreshError) {
+      return NextResponse.json({ error: e.message }, { status: 400 });
+    }
     const msg = e instanceof Error ? e.message : "Refresh failed. Please try again.";
-    await prisma.feedConnection.update({
-      where: { id: conn.id },
-      data: { status: "error", lastError: msg },
-    });
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 }

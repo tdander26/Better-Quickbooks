@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "better-books": {
+      "command": "npx",
+      "args": ["tsx", "--env-file-if-exists=.env", "mcp/server.ts"],
+      "env": {
+        "DATABASE_URL": "${DATABASE_URL:-file:./dev.db}"
+      }
+    }
+  }
+}

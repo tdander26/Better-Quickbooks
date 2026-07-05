@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAuth } from "@/lib/session";
-import { toCents } from "@/lib/money";
+import { createManualTransaction, TransactionInputError } from "@/lib/transactions";
 import { UNCATEGORIZED } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
 
@@ -110,61 +110,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const accountId = String(body.accountId ?? "");
-  if (!accountId) {
-    return NextResponse.json({ error: "Pick an account" }, { status: 400 });
-  }
-  const account = await prisma.account.findUnique({ where: { id: accountId } });
-  if (!account) {
-    return NextResponse.json({ error: "That account doesn't exist" }, { status: 404 });
-  }
-
-  const payee = String(body.payee ?? "").trim();
-  if (!payee) {
-    return NextResponse.json({ error: "Add a payee or description" }, { status: 400 });
-  }
-  const description = String(body.description ?? "").trim();
-
-  // Signed dollars -> integer cents (positive = money in, negative = money out).
-  const amountCents = toCents(body.amount ?? 0);
-  if (!Number.isFinite(amountCents) || amountCents === 0) {
-    return NextResponse.json({ error: "Enter an amount" }, { status: 400 });
-  }
-
-  let postedAt = new Date();
-  if (body.postedAt) {
-    const parsed = new Date(String(body.postedAt));
-    if (isNaN(parsed.getTime())) {
-      return NextResponse.json({ error: "That date isn't valid" }, { status: 400 });
+  try {
+    const transaction = await createManualTransaction({
+      accountId: body.accountId,
+      amount: body.amount,
+      payee: body.payee,
+      description: body.description,
+      postedAt: body.postedAt,
+      categoryId: body.categoryId,
+    });
+    return NextResponse.json({ ok: true, transaction }, { status: 201 });
+  } catch (e) {
+    if (e instanceof TransactionInputError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
     }
-    postedAt = parsed;
+    throw e;
   }
-
-  // Resolve category: explicit choice, else fall back to Uncategorized.
-  const uncategorized = await prisma.category.findFirst({ where: { name: UNCATEGORIZED } });
-  const requestedCategoryId = body.categoryId ? String(body.categoryId) : "";
-  let categoryId: string | null = uncategorized?.id ?? null;
-  if (requestedCategoryId) {
-    const cat = await prisma.category.findUnique({ where: { id: requestedCategoryId } });
-    if (!cat) return NextResponse.json({ error: "That category doesn't exist" }, { status: 400 });
-    categoryId = cat.id;
-  }
-
-  // Choosing a real (non-Uncategorized) category counts as reviewed.
-  const reviewed = Boolean(requestedCategoryId && requestedCategoryId !== uncategorized?.id);
-
-  const transaction = await prisma.transaction.create({
-    data: {
-      accountId,
-      postedAt,
-      amountCents,
-      payee,
-      description,
-      reviewed,
-      splits: { create: [{ amountCents, categoryId }] },
-    },
-    include: { account: true, splits: { include: { category: true } } },
-  });
-
-  return NextResponse.json({ ok: true, transaction }, { status: 201 });
 }
