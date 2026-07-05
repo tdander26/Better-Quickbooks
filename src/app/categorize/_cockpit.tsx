@@ -12,7 +12,7 @@
 import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV, isActive } from "@/components/nav";
+import { NAV, MOBILE_NAV, isActive } from "@/components/nav";
 import type {
   CockpitData,
   CockpitTxn,
@@ -45,7 +45,7 @@ const T = {
   onDark: "#F4F1EA",
   onDarkMuted: "#A39D8E",
   darkDivider: "#55503F",
-  serif: "'Instrument Serif', Georgia, serif",
+  serif: "var(--font-serif)",
 } as const;
 
 let activitySeq = 0;
@@ -334,29 +334,9 @@ export function Cockpit({ data }: { data: CockpitData }) {
   }
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "236px 1fr 320px",
-        height: "100vh",
-        minHeight: 720,
-        background: T.bg,
-        color: T.ink,
-        fontFamily: "var(--font-sans)",
-        fontSize: 14,
-        overflow: "hidden",
-      }}
-    >
-      {/* ============ LEFT PANE: NAV + ACCOUNTS ============ */}
-      <aside
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          borderRight: `1px solid ${T.border}`,
-          padding: "26px 18px 18px",
-          overflowY: "auto",
-        }}
-      >
+    <div className="ck-root">
+      {/* ============ LEFT PANE: NAV + ACCOUNTS (desktop) ============ */}
+      <aside className="ck-left">
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "0 8px 26px" }}>
           <span style={{ fontFamily: T.serif, fontSize: 25, letterSpacing: "-0.5px" }}>Ledger</span>
           <span style={{ fontSize: 10.5, color: T.faint, letterSpacing: "0.08em", textTransform: "uppercase" }}>
@@ -464,8 +444,20 @@ export function Cockpit({ data }: { data: CockpitData }) {
       </aside>
 
       {/* ============ CENTER PANE: CATEGORIZE WORKSPACE ============ */}
-      <main style={{ display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
-        <header style={{ padding: "24px 30px 16px", borderBottom: `1px solid ${T.border}` }}>
+      <main className="ck-center">
+        {/* Mobile-only brand bar (the desktop left rail is hidden < 900px) */}
+        <div className="ck-mobilebar">
+          <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span style={{ fontFamily: "var(--font-serif)", fontSize: 22, letterSpacing: "-0.5px" }}>Ledger</span>
+            <span style={{ fontSize: 10, color: T.faint, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              Anderson LLC
+            </span>
+          </span>
+          <span style={{ fontSize: 12, color: T.muted, fontVariantNumeric: "tabular-nums" }}>
+            {remaining} to review
+          </span>
+        </div>
+        <header className="ck-header">
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
             <div>
               <div style={{ fontFamily: T.serif, fontSize: 28, letterSpacing: "-0.5px" }}>Categorize</div>
@@ -487,7 +479,7 @@ export function Cockpit({ data }: { data: CockpitData }) {
           </div>
         </header>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px 30px 24px" }}>
+        <div className="ck-body">
           {/* SMART BATCHES */}
           {batches.length > 0 && (
             <>
@@ -541,7 +533,8 @@ export function Cockpit({ data }: { data: CockpitData }) {
           </div>
 
           {oneOffs.length > 0 ? (
-            <div style={{ border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", background: T.card }}>
+            <div className="ck-gridwrap">
+            <div className="ck-grid" style={{ border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", background: T.card }}>
               <div
                 style={{
                   display: "grid",
@@ -591,6 +584,7 @@ export function Cockpit({ data }: { data: CockpitData }) {
                 />
               ))}
             </div>
+            </div>
           ) : (
             <div
               style={{
@@ -609,18 +603,7 @@ export function Cockpit({ data }: { data: CockpitData }) {
         </div>
 
         {/* DARK RUNNING-TALLY FOOTER */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 16,
-            padding: "11px 30px",
-            background: T.ink,
-            color: T.onDarkMuted,
-            fontSize: 12,
-            flex: "none",
-          }}
-        >
+        <div className="ck-footer">
           <span style={{ color: T.onDark, fontWeight: 600 }}>{filed} filed today</span>
           {Object.entries(tally)
             .slice(0, 5)
@@ -645,15 +628,7 @@ export function Cockpit({ data }: { data: CockpitData }) {
       </main>
 
       {/* ============ RIGHT PANE: ATTENTION + ACTIVITY ============ */}
-      <aside
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          borderLeft: `1px solid ${T.border}`,
-          background: T.warm,
-          overflowY: "auto",
-        }}
-      >
+      <aside className="ck-right">
         <div style={{ padding: "26px 22px 8px" }}>
           <div style={{ ...uppercaseLabel, paddingBottom: 13 }}>Needs attention</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -767,6 +742,53 @@ export function Cockpit({ data }: { data: CockpitData }) {
           </div>
         </div>
       </aside>
+
+      {/* ============ MOBILE BOTTOM TAB BAR (< 900px) ============ */}
+      <nav className="ck-mobilenav">
+        {MOBILE_NAV.map((item) => {
+          const active = isActive(pathname, item.href);
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              style={{
+                position: "relative",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 3,
+                padding: "8px 0 10px",
+                fontSize: 11,
+                fontWeight: 500,
+                textDecoration: "none",
+                color: active ? T.accent : T.muted,
+              }}
+            >
+              <Icon size={20} strokeWidth={active ? 2.25 : 1.75} />
+              {item.label}
+              {item.hot && remaining > 0 && (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: 4,
+                    left: "calc(50% + 8px)",
+                    background: T.accent,
+                    color: "#FAF9F6",
+                    borderRadius: 99,
+                    fontSize: 9,
+                    fontWeight: 600,
+                    padding: "0 5px",
+                    lineHeight: "15px",
+                  }}
+                >
+                  {remaining}
+                </span>
+              )}
+            </Link>
+          );
+        })}
+      </nav>
     </div>
   );
 }

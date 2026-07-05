@@ -1,6 +1,24 @@
 import type { Metadata, Viewport } from "next";
+import { Instrument_Sans, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/AppShell";
+
+// Self-hosted via next/font: fonts are fetched at build time and served from the
+// app's own origin (no runtime dependency on fonts.googleapis.com). The CSS
+// variables below are consumed by globals.css (--font-sans / --font-serif).
+const instrumentSans = Instrument_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-sans-next",
+  display: "swap",
+});
+const instrumentSerif = Instrument_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+  variable: "--font-serif-next",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Ledger — Anderson LLC",
@@ -18,22 +36,13 @@ export const viewport: Viewport = {
   themeColor: "#2a6b4f",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // Allow zoom for accessibility; the layout is responsive down to phone widths.
+  maximumScale: 5,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <head>
-        {/* Instrument Serif + Instrument Sans, per the design handoff. Loaded via
-            <link> (matching the design files) so no build-time font fetch is needed. */}
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html lang="en" className={`${instrumentSans.variable} ${instrumentSerif.variable}`}>
       <body>
         <AppShell>{children}</AppShell>
       </body>
