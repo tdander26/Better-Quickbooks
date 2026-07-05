@@ -1,80 +1,98 @@
 "use client";
 
-// Responsive navigation shell. Desktop: fixed left sidebar. Mobile: sticky
-// bottom tab bar with large touch targets. The active route is highlighted.
+// Global navigation shell, reskinned to the Ledger design handoff. Desktop: a
+// 236px left rail with the "Ledger" wordmark and the shared nav. Mobile: a
+// sticky bottom tab bar. The Categorize row carries a live "needs review" badge.
+//
+// The Categorize cockpit ("/categorize") renders its own full three-pane layout
+// (including its own left rail), so — like "/login" — it opts out of this shell.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState, type ReactNode } from "react";
 import { clsx } from "clsx";
 import {
   LayoutDashboard,
-  Landmark,
+  ListChecks,
   ArrowLeftRight,
+  Landmark,
   BarChart3,
   Filter,
   Settings,
-  Wallet,
+  type LucideIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { NAV, isActive } from "@/components/nav";
 
-const NAV = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/accounts", label: "Accounts", icon: Landmark },
-  { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
-  { href: "/reports", label: "Reports", icon: BarChart3 },
-  { href: "/rules", label: "Rules", icon: Filter },
-  { href: "/settings", label: "Settings", icon: Settings },
-];
+// Icons for the mobile bottom bar (the desktop rail is text-only, per the spec).
+const ICONS: Record<string, LucideIcon> = {
+  "/": LayoutDashboard,
+  "/categorize": ListChecks,
+  "/transactions": ArrowLeftRight,
+  "/accounts": Landmark,
+  "/reports": BarChart3,
+  "/rules": Filter,
+  "/settings": Settings,
+};
 
-// The four most-used destinations get the mobile bottom bar; the rest live under
-// Settings / are reachable from the dashboard.
-const MOBILE_NAV = [NAV[0], NAV[2], NAV[3], NAV[5]];
-
-function isActive(pathname: string, href: string) {
-  if (href === "/") return pathname === "/";
-  return pathname === href || pathname.startsWith(href + "/");
-}
+const MOBILE_NAV = [NAV[1], NAV[0], NAV[2], NAV[4]]; // Categorize, Overview, Transactions, Reports
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  if (pathname === "/login") return <>{children}</>;
+  const badge = useNeedsReviewCount();
+
+  // Full-bleed routes render without the shell chrome.
+  if (pathname === "/login" || pathname === "/categorize") return <>{children}</>;
 
   return (
     <div className="min-h-dvh md:flex">
-      {/* Desktop sidebar */}
+      {/* Desktop left rail */}
       <aside
-        className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r px-3 py-5 md:flex"
-        style={{ borderColor: "var(--border)" }}
+        className="sticky top-0 hidden h-dvh shrink-0 flex-col overflow-y-auto border-r px-[18px] pb-[18px] pt-[26px] md:flex"
+        style={{ width: 236, borderColor: "var(--border)" }}
       >
-        <div className="mb-6 flex items-center gap-2 px-2">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-b from-brand-400 to-brand-600 text-white">
-            <Wallet size={18} />
-          </div>
-          <div className="leading-tight">
-            <div className="text-sm font-semibold">Better Books</div>
-            <div className="muted text-xs">Dr. Anderson</div>
-          </div>
+        <div className="flex items-baseline gap-2 px-2 pb-[26px]">
+          <span className="serif" style={{ fontSize: 25 }}>
+            Ledger
+          </span>
+          <span
+            className="uppercase"
+            style={{ fontSize: 10.5, color: "var(--faint)", letterSpacing: "0.08em" }}
+          >
+            Anderson LLC
+          </span>
         </div>
-        <nav className="flex flex-col gap-1">
+
+        <nav className="flex flex-col gap-0.5">
           {NAV.map((item) => {
             const active = isActive(pathname, item.href);
-            const Icon = item.icon;
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 className={clsx(
-                  "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition",
-                  active ? "bg-brand-500/15 text-brand-700 dark:text-brand-300" : "muted hover:bg-black/5 dark:hover:bg-white/5"
+                  "flex items-center justify-between rounded-[7px] px-2.5 py-[9px] text-sm transition",
+                  active ? "font-semibold" : "font-normal hover:bg-[var(--hover)]",
                 )}
+                style={{
+                  color: active ? "var(--text)" : "var(--muted)",
+                  background: active ? "#EFEAE0" : "transparent",
+                }}
               >
-                <Icon size={18} />
-                {item.label}
+                <span>{item.label}</span>
+                {item.hot && badge > 0 && (
+                  <span
+                    className="rounded-full px-[7px] py-px text-[11px] font-semibold"
+                    style={{ background: "var(--accent)", color: "#FAF9F6" }}
+                  >
+                    {badge}
+                  </span>
+                )}
               </Link>
             );
           })}
         </nav>
-        <form action="/api/auth/logout" method="post" className="mt-auto px-1">
-          <button className="muted text-xs hover:underline" type="submit">
+
+        <form action="/api/auth/logout" method="post" className="mt-auto px-1 pt-6">
+          <button className="text-xs hover:underline" style={{ color: "var(--faint)" }} type="submit">
             Sign out
           </button>
         </form>
@@ -87,10 +105,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           className="sticky top-0 z-10 flex items-center gap-2 border-b px-4 py-3 backdrop-blur md:hidden"
           style={{ borderColor: "var(--border)", background: "color-mix(in srgb, var(--bg) 85%, transparent)" }}
         >
-          <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-b from-brand-400 to-brand-600 text-white">
-            <Wallet size={16} />
-          </div>
-          <span className="font-semibold">Better Books</span>
+          <span className="serif" style={{ fontSize: 20 }}>
+            Ledger
+          </span>
+          <span className="uppercase" style={{ fontSize: 9.5, color: "var(--faint)", letterSpacing: "0.08em" }}>
+            Anderson LLC
+          </span>
         </header>
 
         <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-5 pb-24 md:px-6 md:pb-8">{children}</main>
@@ -103,22 +123,48 @@ export function AppShell({ children }: { children: ReactNode }) {
       >
         {MOBILE_NAV.map((item) => {
           const active = isActive(pathname, item.href);
-          const Icon = item.icon;
+          const Icon = ICONS[item.href] ?? LayoutDashboard;
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={clsx(
-                "flex flex-col items-center gap-1 py-2.5 text-[11px] font-medium",
-                active ? "text-brand-600 dark:text-brand-400" : "muted"
-              )}
+              className="relative flex flex-col items-center gap-1 py-2.5 text-[11px] font-medium"
+              style={{ color: active ? "var(--accent)" : "var(--muted)" }}
             >
               <Icon size={20} />
               {item.label}
+              {item.hot && badge > 0 && (
+                <span
+                  className="absolute right-1/2 top-1 translate-x-[14px] rounded-full px-[5px] text-[9px] font-semibold"
+                  style={{ background: "var(--accent)", color: "#FAF9F6" }}
+                >
+                  {badge}
+                </span>
+              )}
             </Link>
           );
         })}
       </nav>
     </div>
   );
+}
+
+// Live count of transactions still needing review, for the Categorize badge.
+function useNeedsReviewCount(): number {
+  const [count, setCount] = useState(0);
+  const pathname = usePathname();
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/transactions?filter=needs_review&page=1")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d && typeof d.total === "number") setCount(d.total);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // Re-fetch on navigation so filing on the cockpit updates the badge elsewhere.
+  }, [pathname]);
+  return count;
 }

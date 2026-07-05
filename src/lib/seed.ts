@@ -147,6 +147,35 @@ export async function seedDemoData(): Promise<SeedResult> {
   rows.push({ acct: "card", date: "2026-07-02", amount: -47.5, payee: "Kwik Trip", description: "KWIK TRIP 442", pending: true });
   rows.push({ acct: "card", date: "2026-07-03", amount: -96.13, payee: "Menards", description: "MENARDS PURCHASE", pending: true });
 
+  // ---- Unreviewed inbox (no category => reviewed:false) --------------------
+  // Feeds the Categorize cockpit: repeated merchants become Smart batches (via
+  // rules or filing history); the rest are Power-grid one-offs. One Amazon
+  // refund is an opposite-signed outlier so a batch surfaces a review flag.
+  const inbox: { acct: string; date: string; amount: number; payee: string; description: string }[] = [
+    // Amazon ×4 (rule -> Office Supplies), incl. a refund that should get flagged
+    { acct: "card", date: "2026-07-01", amount: -128.44, payee: "Amazon", description: "AMAZON.COM PURCHASE" },
+    { acct: "card", date: "2026-07-02", amount: -63.19, payee: "Amazon", description: "AMAZON.COM PURCHASE" },
+    { acct: "card", date: "2026-07-03", amount: -212.6, payee: "Amazon", description: "AMAZON.COM PURCHASE" },
+    { acct: "card", date: "2026-07-04", amount: 41.2, payee: "Amazon", description: "AMAZON.COM REFUND" },
+    // Uber ×3 (rule -> Travel)
+    { acct: "card", date: "2026-07-01", amount: -18.2, payee: "Uber", description: "UBER TRIP" },
+    { acct: "card", date: "2026-07-02", amount: -24.75, payee: "Uber", description: "UBER TRIP" },
+    { acct: "card", date: "2026-07-03", amount: -31.4, payee: "Uber", description: "UBER TRIP" },
+    // Adobe ×2 (rule -> Software & Subscriptions)
+    { acct: "card", date: "2026-07-01", amount: -52.99, payee: "Adobe", description: "ADOBE CREATIVE CLOUD" },
+    { acct: "card", date: "2026-07-03", amount: -22.99, payee: "Adobe", description: "ADOBE STOCK" },
+    // Henry Schein ×2 (no rule; suggested from filing history -> Medical Supplies)
+    { acct: "card", date: "2026-07-02", amount: -418.5, payee: "Henry Schein", description: "HENRY SCHEIN MEDICAL" },
+    { acct: "card", date: "2026-07-04", amount: -276.15, payee: "Henry Schein", description: "HENRY SCHEIN MEDICAL" },
+    // One-offs (varied suggestion confidence)
+    { acct: "chase", date: "2026-07-04", amount: 10480, payee: "Stripe", description: "STRIPE TRANSFER PAYOUT" }, // rule -> Patient Revenue
+    { acct: "card", date: "2026-07-03", amount: -212.9, payee: "Shell", description: "SHELL OIL 4413" }, // rule -> Auto & Fuel
+    { acct: "card", date: "2026-07-02", amount: -312.19, payee: "AWS", description: "AMAZON WEB SERVICES" }, // no match -> Choose
+    { acct: "card", date: "2026-07-01", amount: -284.77, payee: "Home Depot", description: "THE HOME DEPOT #2418" }, // no match
+    { acct: "card", date: "2026-07-02", amount: -42.1, payee: "USPS", description: "USPS PO 2841" }, // no match
+  ];
+  for (const r of inbox) rows.push(r);
+
   const uncategorizedId = catId.get("Uncategorized")!;
   let count = 0;
   for (const r of rows) {
