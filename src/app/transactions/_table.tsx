@@ -45,6 +45,8 @@ import {
 } from "@/lib/types";
 import { formatMoney, toCents } from "@/lib/money";
 import { Money, EmptyState } from "@/components/ui";
+import { TxnBadges } from "@/components/TxnBadges";
+import type { Badge } from "@/lib/badges";
 
 // ---------------------------------------------------------------------------
 // Shared shapes (also consumed by page.tsx)
@@ -71,6 +73,7 @@ export interface TxnRow {
   reviewed: boolean;
   transferId: string | null;
   splits: TxnSplit[];
+  badges: Badge[];
 }
 
 export interface CategoryOption {
@@ -850,15 +853,11 @@ export function TransactionsTable({
                         {format(parseISO(t.postedAt), "MMM d, yyyy")}
                       </td>
                       <td className="px-3 py-3 align-middle">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium">
                             {t.payee || t.description || "—"}
                           </span>
-                          {t.pending && (
-                            <span className="chip bg-amber-500/15 text-amber-700 dark:text-amber-300">
-                              Pending
-                            </span>
-                          )}
+                          <TxnBadges badges={t.badges} />
                         </div>
                         {t.description && t.description !== t.payee && (
                           <div className="muted mt-0.5 max-w-[26ch] truncate text-xs">
@@ -916,12 +915,8 @@ export function TransactionsTable({
                         </span>
                         <span aria-hidden>·</span>
                         <span className="truncate">{t.accountName}</span>
-                        {t.pending && (
-                          <span className="chip bg-amber-500/15 text-amber-700 dark:text-amber-300">
-                            Pending
-                          </span>
-                        )}
                       </div>
+                      <TxnBadges badges={t.badges} className="mt-1.5" />
                     </div>
                   </div>
                   <div className="flex items-center gap-2 pl-[26px]">

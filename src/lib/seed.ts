@@ -4,6 +4,7 @@
 // deploy. Uses the shared prisma singleton.
 
 import { prisma } from "@/lib/db";
+import { linkTransfers } from "@/lib/transfers";
 
 const c = (dollars: number) => Math.round(dollars * 100);
 
@@ -161,11 +162,16 @@ export async function seedDemoData(): Promise<SeedResult> {
         description: r.description,
         pending: r.pending ?? false,
         reviewed: r.category ? true : false,
+        categorizedBy: r.category ? "manual" : null,
         splits: { create: [{ amountCents, categoryId }] },
       },
     });
     count++;
   }
+
+  // Link the paired demo transfers (Chase<->Ally, card payments) so the
+  // transfer-linking feature is visible out of the box.
+  await linkTransfers();
 
   return { categories: CATEGORIES.length, rules: RULES.length, accounts: 4, transactions: count };
 }

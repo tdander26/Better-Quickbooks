@@ -4,6 +4,24 @@ Based on a full code audit (transactions workspace, rules engine, transfers,
 reports, dashboard/accounts/settings, data model, and general quality).
 Organized into phases; each phase ships independently.
 
+## Status
+
+- ✅ **Phase 0 (fixes)** and ✅ **Phase 1 (smart badges)** — SHIPPED.
+  - Rule provenance (`Split.matchedRuleId`, `Transaction.categorizedBy`) persisted
+    on import/CSV/manual/re-apply; rule `matchCount`/`lastMatchedAt` tracked.
+  - Transfer auto-linking unified in `src/lib/transfers.ts` — fixes bulk transfer
+    (was assigning mismatched ids), auto-links on import/CSV, and links the demo
+    seed's transfer pairs. Matches any transfer-section category.
+  - Category icons render correctly (`src/lib/icons.tsx`).
+  - Global `loading.tsx` + `error.tsx`.
+  - Smart badges (`src/lib/badges.ts`, `TxnBadges`): Auto (rule name), Needs
+    review, Uncategorized, Pending, Transfer (linked/unmatched), Split, Recurring,
+    Possible duplicate, Large ($5k) — on the table + mobile cards, with detectors
+    in `src/lib/badge-context.ts`. Verified with tests + screenshots.
+- ⏭️ **Next up:** Phase 2 QoL (create-rule-from-transaction, undo, report
+  drill-down, date groups) then Phase 3 parity (reconciliation, attachments,
+  recurring page). Invoices deprioritized per owner.
+
 ---
 
 ## Phase 0 — Fix what the audit caught (bugs & dead features)

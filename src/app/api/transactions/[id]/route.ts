@@ -146,7 +146,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
       await tx.transaction.update({
         where: { id: txn.id },
-        data: { ...scalar, reviewed: reviewedFlag(true) },
+        data: { ...scalar, reviewed: reviewedFlag(true), categorizedBy: "manual" },
       });
     });
 
@@ -168,7 +168,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       });
       await tx.transaction.update({
         where: { id: txn.id },
-        data: { ...scalar, reviewed: reviewedFlag(true) },
+        data: { ...scalar, reviewed: reviewedFlag(true), categorizedBy: "manual" },
       });
     });
 

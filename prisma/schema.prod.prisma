@@ -65,6 +65,9 @@ model Transaction {
 
   transferId    String?
   reviewed      Boolean  @default(false)
+  categorizedBy String?
+  clearedStatus String   @default("uncleared")
+  reconciledAt  DateTime?
   notes         String   @default("")
 
   splits    Split[]
@@ -73,6 +76,7 @@ model Transaction {
 
   @@index([accountId, postedAt])
   @@index([transferId])
+  @@index([accountId, amountCents, postedAt])
 }
 
 model Split {
@@ -83,8 +87,9 @@ model Split {
   categoryId String?
   category   Category? @relation(fields: [categoryId], references: [id])
 
-  amountCents Int
-  memo        String  @default("")
+  amountCents   Int
+  memo          String  @default("")
+  matchedRuleId String?
 
   @@index([categoryId])
   @@index([transactionId])
@@ -127,6 +132,9 @@ model Rule {
   category   Category @relation(fields: [categoryId], references: [id])
 
   markTransfer Boolean @default(false)
+
+  matchCount    Int      @default(0)
+  lastMatchedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
