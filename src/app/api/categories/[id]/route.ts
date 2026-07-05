@@ -43,6 +43,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     data.icon = String(body.icon).trim();
   }
 
+  if (body.taxLine !== undefined) {
+    data.taxLine = String(body.taxLine).trim();
+  }
+
+  if (body.color !== undefined) {
+    data.color = String(body.color).trim();
+  }
+
   try {
     const category = await prisma.category.update({ where: { id }, data });
     return NextResponse.json({ ok: true, category });

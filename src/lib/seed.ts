@@ -10,26 +10,26 @@ const c = (dollars: number) => Math.round(dollars * 100);
 
 type Sec = "income" | "expense" | "asset" | "liability" | "equity" | "transfer";
 
-const CATEGORIES: { name: string; section: Sec; icon?: string; system?: boolean }[] = [
-  { name: "Patient Revenue", section: "income", icon: "stethoscope" },
-  { name: "Consulting Income", section: "income", icon: "briefcase" },
-  { name: "Interest Income", section: "income", icon: "percent" },
-  { name: "Other Income", section: "income", icon: "plus-circle" },
-  { name: "Payroll", section: "expense", icon: "users" },
-  { name: "Rent", section: "expense", icon: "building" },
-  { name: "Medical Supplies", section: "expense", icon: "cross" },
-  { name: "Office Supplies", section: "expense", icon: "paperclip" },
-  { name: "Software & Subscriptions", section: "expense", icon: "monitor" },
-  { name: "Insurance", section: "expense", icon: "shield" },
-  { name: "Utilities", section: "expense", icon: "zap" },
-  { name: "Meals & Entertainment", section: "expense", icon: "utensils" },
-  { name: "Travel", section: "expense", icon: "plane" },
-  { name: "Professional Fees", section: "expense", icon: "scale" },
-  { name: "Continuing Education", section: "expense", icon: "graduation-cap" },
-  { name: "Bank & Merchant Fees", section: "expense", icon: "credit-card" },
-  { name: "Taxes", section: "expense", icon: "landmark" },
-  { name: "Auto & Fuel", section: "expense", icon: "car" },
-  { name: "Marketing", section: "expense", icon: "megaphone" },
+const CATEGORIES: { name: string; section: Sec; icon?: string; system?: boolean; taxLine?: string }[] = [
+  { name: "Patient Revenue", section: "income", icon: "stethoscope", taxLine: "Schedule C, Line 1 — Gross receipts" },
+  { name: "Consulting Income", section: "income", icon: "briefcase", taxLine: "Schedule C, Line 1 — Gross receipts" },
+  { name: "Interest Income", section: "income", icon: "percent", taxLine: "Schedule B, Line 1 — Interest" },
+  { name: "Other Income", section: "income", icon: "plus-circle", taxLine: "Schedule C, Line 6 — Other income" },
+  { name: "Payroll", section: "expense", icon: "users", taxLine: "Schedule C, Line 26 — Wages" },
+  { name: "Rent", section: "expense", icon: "building", taxLine: "Schedule C, Line 20b — Rent (other)" },
+  { name: "Medical Supplies", section: "expense", icon: "cross", taxLine: "Schedule C, Line 22 — Supplies" },
+  { name: "Office Supplies", section: "expense", icon: "paperclip", taxLine: "Schedule C, Line 22 — Supplies" },
+  { name: "Software & Subscriptions", section: "expense", icon: "monitor", taxLine: "Schedule C, Line 27a — Other expenses" },
+  { name: "Insurance", section: "expense", icon: "shield", taxLine: "Schedule C, Line 15 — Insurance" },
+  { name: "Utilities", section: "expense", icon: "zap", taxLine: "Schedule C, Line 25 — Utilities" },
+  { name: "Meals & Entertainment", section: "expense", icon: "utensils", taxLine: "Schedule C, Line 24b — Meals" },
+  { name: "Travel", section: "expense", icon: "plane", taxLine: "Schedule C, Line 24a — Travel" },
+  { name: "Professional Fees", section: "expense", icon: "scale", taxLine: "Schedule C, Line 17 — Legal & professional" },
+  { name: "Continuing Education", section: "expense", icon: "graduation-cap", taxLine: "Schedule C, Line 27a — Other expenses" },
+  { name: "Bank & Merchant Fees", section: "expense", icon: "credit-card", taxLine: "Schedule C, Line 10 — Commissions & fees" },
+  { name: "Taxes", section: "expense", icon: "landmark", taxLine: "Schedule C, Line 23 — Taxes & licenses" },
+  { name: "Auto & Fuel", section: "expense", icon: "car", taxLine: "Schedule C, Line 9 — Car & truck" },
+  { name: "Marketing", section: "expense", icon: "megaphone", taxLine: "Schedule C, Line 8 — Advertising" },
   { name: "Uncategorized", section: "expense", icon: "help-circle", system: true },
   { name: "Owner's Draw", section: "equity", icon: "arrow-up-circle" },
   { name: "Owner's Contribution", section: "equity", icon: "arrow-down-circle" },
@@ -92,7 +92,14 @@ export async function seedDemoData(): Promise<SeedResult> {
   for (let i = 0; i < CATEGORIES.length; i++) {
     const cat = CATEGORIES[i];
     const created = await prisma.category.create({
-      data: { name: cat.name, section: cat.section, icon: cat.icon ?? "", isSystem: cat.system ?? false, sortOrder: i },
+      data: {
+        name: cat.name,
+        section: cat.section,
+        icon: cat.icon ?? "",
+        taxLine: cat.taxLine ?? "",
+        isSystem: cat.system ?? false,
+        sortOrder: i,
+      },
     });
     catId.set(cat.name, created.id);
   }
