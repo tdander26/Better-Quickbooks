@@ -6,13 +6,13 @@
 // untouched (never silently downgraded) unless { force: true } is passed.
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
   const res = await prisma.transaction.updateMany({
     where: {
       id: { in: ids },
+      businessId: ctx.businessId,
       // Don't downgrade a finalized ('reconciled') transaction unless forced.
       ...(force ? {} : { clearedStatus: { not: "reconciled" } }),
     },

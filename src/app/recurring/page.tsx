@@ -6,6 +6,7 @@ import { differenceInDays, format, formatDistanceToNow } from "date-fns";
 import { clsx } from "clsx";
 import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader, Card, StatTile, Money, Badge, EmptyState } from "@/components/ui";
 import { CategoryIcon } from "@/lib/icons";
 import { detectSeries, type Series } from "@/lib/recurring-series";
@@ -28,7 +29,9 @@ function monthlyCents(s: Series): number {
 }
 
 export default async function RecurringPage() {
+  const ctx = await getBusinessContext();
   const txns = await prisma.transaction.findMany({
+    where: { businessId: ctx.businessId },
     orderBy: { postedAt: "asc" },
     include: { splits: { include: { category: true } } },
   });

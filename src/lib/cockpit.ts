@@ -145,17 +145,17 @@ function accountDetail(institution: string, type: string): string {
   return `${institution} · ${kind}`;
 }
 
-export async function getCockpitData(): Promise<CockpitData> {
+export async function getCockpitData(businessId: string): Promise<CockpitData> {
   const now = new Date();
 
   const [accountBalancesRows, rulesRaw, categoriesRaw, unreviewed, reviewed] = await Promise.all([
     // Running balances (opening + sum of txns), mirroring reports.accountBalances.
     (async () => {
-      const accounts = await prisma.account.findMany({
-        where: { archived: false },
+      const accounts = await prisma.financialAccount.findMany({
+        where: { businessId, archived: false },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
       });
-      const sums = await prisma.transaction.groupBy({ by: ["accountId"], _sum: { amountCents: true } });
+      const sums = await prisma.transaction.groupBy({ by: ["accountId"], where: { businessId }, _sum: { amountCents: true } });
       const byAcct = new Map(sums.map((s) => [s.accountId, s._sum.amountCents ?? 0]));
       return accounts.map((a) => ({
         id: a.id,
@@ -165,15 +165,15 @@ export async function getCockpitData(): Promise<CockpitData> {
         balanceCents: a.openingBalanceCents + (byAcct.get(a.id) ?? 0),
       }));
     })(),
-    prisma.rule.findMany({ orderBy: [{ priority: "asc" }] }),
-    prisma.category.findMany({ orderBy: [{ section: "asc" }, { sortOrder: "asc" }, { name: "asc" }] }),
+    prisma.rule.findMany({ where: { businessId }, orderBy: [{ priority: "asc" }] }),
+    prisma.category.findMany({ where: { businessId }, orderBy: [{ section: "asc" }, { sortOrder: "asc" }, { name: "asc" }] }),
     prisma.transaction.findMany({
-      where: { reviewed: false },
+      where: { businessId, reviewed: false },
       orderBy: [{ postedAt: "desc" }, { createdAt: "desc" }],
       include: { account: true, splits: { include: { category: true } } },
     }),
     prisma.transaction.findMany({
-      where: { reviewed: true },
+      where: { businessId, reviewed: true },
       orderBy: [{ postedAt: "desc" }, { updatedAt: "desc" }],
       include: { account: true, splits: { include: { category: true } } },
       take: 400,
@@ -453,6 +453,7 @@ export async function getCockpitData(): Promise<CockpitData> {
   const qStart = startOfQuarter(now);
   const pnlSplits = await prisma.split.findMany({
     where: {
+      businessId,
       category: { section: { in: ["income", "expense"] } },
       transaction: { postedAt: { gte: qStart, lte: now } },
     },

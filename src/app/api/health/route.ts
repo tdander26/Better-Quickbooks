@@ -20,7 +20,7 @@ export async function GET() {
   let db: unknown = "ok";
   let accounts: number | null = null;
   try {
-    accounts = await prisma.account.count();
+    accounts = await prisma.financialAccount.count();
   } catch (e) {
     const err = e as { message?: string; name?: string; code?: string };
     db = {

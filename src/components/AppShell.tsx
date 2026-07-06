@@ -1,23 +1,47 @@
 "use client";
 
 // Global navigation shell, reskinned to the Ledger design handoff. Desktop: a
-// 236px left rail with the "Ledger" wordmark and the shared nav. Mobile: a
-// sticky bottom tab bar. The Categorize row carries a live "needs review" badge.
+// 236px left rail with the business switcher + the shared nav. Mobile: a sticky
+// bottom tab bar. The Categorize row carries a live "needs review" badge.
 //
 // The Categorize cockpit ("/categorize") renders its own full three-pane layout
-// (including its own left rail), so — like "/login" — it opts out of this shell.
+// (including its own left rail), and the auth/onboarding routes render their own
+// full-screen chrome, so they all opt out of this shell.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { clsx } from "clsx";
+import { Wallet } from "lucide-react";
 import { NAV, MOBILE_NAV, isActive } from "@/components/nav";
+import { BusinessSwitcher } from "@/components/BusinessSwitcher";
+import { SignOutButton } from "@/components/SignOutButton";
+import type { ShellData } from "@/lib/nav-types";
 
-export function AppShell({ children }: { children: ReactNode }) {
+// Routes that render their own full-screen chrome (cockpit / auth / onboarding).
+const BARE_ROUTES = [
+  "/login",
+  "/signup",
+  "/select-business",
+  "/business/new",
+  "/invite",
+  "/categorize",
+];
+
+function isBareRoute(pathname: string) {
+  return BARE_ROUTES.some((p) => pathname === p || pathname.startsWith(p + "/"));
+}
+
+export function AppShell({ children, shell }: { children: ReactNode; shell: ShellData | null }) {
   const pathname = usePathname();
   const badge = useNeedsReviewCount();
 
-  // Full-bleed routes render without the shell chrome.
-  if (pathname === "/login" || pathname === "/categorize") return <>{children}</>;
+  if (isBareRoute(pathname) || !shell) return <>{children}</>;
+
+  // Highlight the single best (longest) matching nav entry, so /settings/team
+  // doesn't also light up /settings.
+  const activeHref = [...NAV]
+    .sort((a, b) => b.href.length - a.href.length)
+    .find((n) => isActive(pathname, n.href))?.href;
 
   return (
     <div className="min-h-dvh md:flex">
@@ -26,21 +50,24 @@ export function AppShell({ children }: { children: ReactNode }) {
         className="sticky top-0 hidden h-dvh shrink-0 flex-col overflow-y-auto border-r px-[18px] pb-[18px] pt-[26px] md:flex"
         style={{ width: 236, borderColor: "var(--border)" }}
       >
-        <div className="flex items-baseline gap-2 px-2 pb-[26px]">
-          <span className="serif" style={{ fontSize: 25 }}>
-            Ledger
-          </span>
-          <span
-            className="uppercase"
-            style={{ fontSize: 10.5, color: "var(--faint)", letterSpacing: "0.08em" }}
-          >
-            Anderson LLC
-          </span>
+        <div className="mb-4">
+          {shell.businesses.length > 0 ? (
+            <BusinessSwitcher businesses={shell.businesses} activeBusinessId={shell.activeBusinessId} />
+          ) : (
+            <div className="flex items-center gap-2 px-2">
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-b from-brand-400 to-brand-600 text-white">
+                <Wallet size={18} />
+              </div>
+              <span className="serif" style={{ fontSize: 22 }}>
+                Ledger
+              </span>
+            </div>
+          )}
         </div>
 
         <nav className="flex flex-col gap-0.5">
           {NAV.map((item) => {
-            const active = isActive(pathname, item.href);
+            const active = item.href === activeHref;
             const Icon = item.icon;
             return (
               <Link
@@ -72,11 +99,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <form action="/api/auth/logout" method="post" className="mt-auto px-1 pt-6">
-          <button className="text-xs hover:underline" style={{ color: "var(--faint)" }} type="submit">
-            Sign out
-          </button>
-        </form>
+        <div className="mt-auto flex flex-col gap-1 px-1 pt-6">
+          <div className="truncate px-1 text-xs" style={{ color: "var(--faint)" }} title={shell.user.email}>
+            {shell.user.email}
+          </div>
+          <SignOutButton className="inline-flex items-center gap-1.5 text-xs hover:underline" />
+        </div>
       </aside>
 
       {/* Main column */}
@@ -89,8 +117,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="serif" style={{ fontSize: 20 }}>
             Ledger
           </span>
-          <span className="uppercase" style={{ fontSize: 9.5, color: "var(--faint)", letterSpacing: "0.08em" }}>
-            Anderson LLC
+          <span className="truncate uppercase" style={{ fontSize: 9.5, color: "var(--faint)", letterSpacing: "0.08em" }}>
+            {shell.businesses.find((b) => b.id === shell.activeBusinessId)?.name ?? ""}
           </span>
         </header>
 

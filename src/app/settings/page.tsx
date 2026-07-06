@@ -3,10 +3,13 @@
 //   2) CSV import: bring transactions in from a spreadsheet / bank export.
 //   3) Chart of accounts: add / rename / delete categories, grouped by section.
 //   4) Security & app: how the PIN + encryption are configured, plus Sign out.
+import Link from "next/link";
 import { format } from "date-fns";
-import { ShieldCheck, KeyRound, Lock, LogOut } from "lucide-react";
+import { ShieldCheck, KeyRound, Lock, Users, CreditCard, ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader } from "@/components/ui";
+import { SignOutButton } from "@/components/SignOutButton";
 import {
   BankFeedCard,
   CsvImportCard,
@@ -34,19 +37,26 @@ function relativeTime(d: Date): string {
 }
 
 export default async function SettingsPage() {
+  const ctx = await getBusinessContext();
   const [connection, accounts, categories] = await Promise.all([
-    prisma.feedConnection.findFirst({ orderBy: { createdAt: "desc" } }),
-    prisma.account.findMany({
-      where: { archived: false },
+    prisma.feedConnection.findFirst({
+      where: { businessId: ctx.businessId },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.financialAccount.findMany({
+      where: { businessId: ctx.businessId, archived: false },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     }),
     prisma.category.findMany({
+      where: { businessId: ctx.businessId },
       orderBy: [{ section: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
     }),
   ]);
 
   const linkedAccounts = connection
-    ? await prisma.account.count({ where: { connectionId: connection.id, archived: false } })
+    ? await prisma.financialAccount.count({
+        where: { businessId: ctx.businessId, connectionId: connection.id, archived: false },
+      })
     : 0;
 
   const connectionInfo: ConnectionInfo | null = connection
@@ -82,6 +92,30 @@ export default async function SettingsPage() {
       <PageHeader title="Settings" subtitle="Connect your bank, import history, and shape your books" />
 
       <div className="flex flex-col gap-5">
+        {/* Workspace links */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Link href="/settings/team" className="card group flex items-center gap-3 p-4 transition hover:-translate-y-0.5 hover:shadow-md">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-500/10 text-brand-600 dark:text-brand-400">
+              <Users size={18} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">Team</div>
+              <div className="muted truncate text-xs">Invite people and manage roles</div>
+            </div>
+            <ChevronRight size={16} className="muted shrink-0 transition group-hover:translate-x-0.5" />
+          </Link>
+          <Link href="/settings/billing" className="card group flex items-center gap-3 p-4 transition hover:-translate-y-0.5 hover:shadow-md">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-500/10 text-brand-600 dark:text-brand-400">
+              <CreditCard size={18} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">Billing</div>
+              <div className="muted truncate text-xs">Subscription and payment</div>
+            </div>
+            <ChevronRight size={16} className="muted shrink-0 transition group-hover:translate-x-0.5" />
+          </Link>
+        </div>
+
         <BankFeedCard connection={connectionInfo} />
         <CsvImportCard accounts={accountList} />
         <ChartOfAccountsCard categories={categoryList} />
@@ -94,7 +128,7 @@ export default async function SettingsPage() {
             </div>
             <div>
               <h2 className="text-base font-semibold leading-tight">Security &amp; app</h2>
-              <p className="muted mt-0.5 text-sm">How this single-user app is locked down</p>
+              <p className="muted mt-0.5 text-sm">How your account and data are protected</p>
             </div>
           </div>
 
@@ -102,12 +136,11 @@ export default async function SettingsPage() {
             <div className="rounded-xl border p-3.5" style={{ borderColor: "var(--border)" }}>
               <div className="flex items-center gap-2 text-sm font-medium">
                 <KeyRound size={15} className="text-brand-600 dark:text-brand-400" />
-                Login PIN
+                Login
               </div>
               <p className="muted mt-1 text-sm">
-                Your unlock PIN or password is the{" "}
-                <code className="rounded bg-black/5 px-1 dark:bg-white/10">APP_PASSWORD</code>{" "}
-                environment variable. Change it in your deployment&apos;s env settings, then restart.
+                You sign in with your email and password. Passwords are hashed with bcrypt and never
+                stored in plain text. Each business&apos;s data is fully isolated from every other.
               </p>
             </div>
 
@@ -128,13 +161,10 @@ export default async function SettingsPage() {
             className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4"
             style={{ borderColor: "var(--border)" }}
           >
-            <p className="muted text-sm">Signed in as Dr. Anderson on this device.</p>
-            <form action="/api/auth/logout" method="post">
-              <button type="submit" className="btn-ghost text-rose-600 dark:text-rose-400">
-                <LogOut size={16} />
-                Sign out
-              </button>
-            </form>
+            <p className="muted text-sm">
+              Signed in as {ctx.user.email} · {ctx.business.name}
+            </p>
+            <SignOutButton />
           </div>
         </section>
       </div>

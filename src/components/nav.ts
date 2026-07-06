@@ -14,6 +14,7 @@ import {
   Receipt,
   History,
   Filter,
+  Users,
   Settings,
 } from "lucide-react";
 
@@ -36,6 +37,7 @@ export const NAV: NavItem[] = [
   { href: "/tax", label: "Tax", icon: Receipt },
   { href: "/imports", label: "Imports", icon: History },
   { href: "/rules", label: "Rules", icon: Filter },
+  { href: "/settings/team", label: "Team", icon: Users },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -45,7 +47,7 @@ export const MOBILE_NAV = [
   NAV[0], // Overview
   NAV[3], // Transactions
   NAV[6], // Reports
-  NAV[11], // Settings
+  NAV[12], // Settings
 ];
 
 export function isActive(pathname: string, href: string): boolean {

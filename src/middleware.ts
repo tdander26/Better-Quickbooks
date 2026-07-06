@@ -1,28 +1,31 @@
-// Auth gate: every route except /login and the login API requires a valid
-// session cookie. Runs on the Edge; uses the Web-Crypto-based verifier in
-// src/lib/auth.ts (no Node APIs), so it works in middleware.
-import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
+// Auth gate (Edge runtime). Uses the edge-safe Auth.js config (no Prisma) to
+// verify the session JWT. Public paths are allowlisted; everything else requires
+// a signed-in user. Deep authorization (business membership, role, subscription)
+// happens server-side in src/lib/session.ts — this is just the cheap edge check.
+import NextAuth from "next-auth";
+import { NextResponse } from "next/server";
+import authConfig from "@/auth.config";
+
+const { auth } = NextAuth(authConfig);
 
 const PUBLIC_PATHS = [
   "/login",
-  "/api/auth/login",
-  "/api/auth/demo",
+  "/signup",
+  "/invite",
+  "/api/auth", // NextAuth routes + our /api/auth/register + /api/auth/demo
+  "/api/stripe/webhook",
   "/api/health",
   "/manifest.webmanifest",
 ];
 
-export async function middleware(req: NextRequest) {
+export default auth((req) => {
   const { pathname } = req.nextUrl;
 
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
     return NextResponse.next();
   }
 
-  const token = req.cookies.get(SESSION_COOKIE)?.value;
-  if (await verifySessionToken(token)) {
-    return NextResponse.next();
-  }
+  if (req.auth) return NextResponse.next();
 
   // API calls get a 401; page navigations redirect to the login screen.
   if (pathname.startsWith("/api/")) {
@@ -32,7 +35,7 @@ export async function middleware(req: NextRequest) {
   url.pathname = "/login";
   url.searchParams.set("next", pathname);
   return NextResponse.redirect(url);
-}
+});
 
 export const config = {
   // Run on everything except Next internals and static assets.

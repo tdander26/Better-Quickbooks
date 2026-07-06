@@ -2,10 +2,10 @@
 // Returns a downloadable CSV of the requested statement (or the raw transaction
 // register) for the given date range. Amounts are plain decimal dollars so the
 // file opens cleanly in spreadsheets; a UTF-8 BOM keeps Excel happy.
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { parseISO, endOfDay, startOfYear, format } from "date-fns";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { profitAndLoss, balanceSheetAsOf, cashFlow } from "@/lib/reports";
 import { UNCATEGORIZED } from "@/lib/types";
 
@@ -31,16 +31,6 @@ function resolveRange(url: URL) {
   return { start, end };
 }
 
-/** The point-in-time date for the balance sheet: end-inclusive, default today. */
-function resolveAsOf(url: URL): Date {
-  const a = url.searchParams.get("asOf");
-  if (a) {
-    const p = parseISO(a);
-    if (!isNaN(p.getTime())) return endOfDay(p);
-  }
-  return new Date();
-}
-
 /** RFC-4180-ish escaping: quote a cell when it contains a comma, quote or newline. */
 function csvCell(v: string | number): string {
   const s = String(v);
@@ -57,8 +47,8 @@ function money(cents: number): string {
 }
 
 export async function GET(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const url = new URL(req.url);
   const typeParam = url.searchParams.get("type");
@@ -73,7 +63,7 @@ export async function GET(req: NextRequest) {
   let name = "report";
 
   if (type === "pl") {
-    const pl = await profitAndLoss(start, end, accountId);
+    const pl = await profitAndLoss(ctx.businessId, start, end, accountId);
     name = "profit-and-loss";
     rows.push(["Section", "Category", "Amount"]);
     for (const l of pl.income) rows.push(["Income", l.category, money(l.amountCents)]);
@@ -82,7 +72,7 @@ export async function GET(req: NextRequest) {
     rows.push(["Expense", "Total expenses", money(pl.totalExpenseCents)]);
     rows.push(["Net", "Net income", money(pl.netIncomeCents)]);
   } else if (type === "cashflow") {
-    const cf = await cashFlow(start, end, accountId);
+    const cf = await cashFlow(ctx.businessId, start, end, accountId);
     const totalIn = cf.inflows.reduce((n, l) => n + l.amountCents, 0);
     const totalOut = cf.outflows.reduce((n, l) => n + l.amountCents, 0);
     name = "cash-flow";
@@ -93,7 +83,8 @@ export async function GET(req: NextRequest) {
     rows.push(["Money Out", "Total out", money(totalOut)]);
     rows.push(["Net", "Net change", money(cf.netCents)]);
   } else if (type === "balance") {
-    const bs = await balanceSheetAsOf(resolveAsOf(url));
+    // Point-in-time balance sheet as of the end of the selected range.
+    const bs = await balanceSheetAsOf(ctx.businessId, end);
     name = "balance-sheet";
     rows.push(["Section", "Account", "Institution", "Amount"]);
     for (const a of bs.assets) rows.push(["Asset", a.name, a.institution, money(a.computedCents)]);
@@ -106,6 +97,7 @@ export async function GET(req: NextRequest) {
     // transactions — the full register for the range (one row per transaction).
     const txns = await prisma.transaction.findMany({
       where: {
+        businessId: ctx.businessId,
         postedAt: { gte: start, lte: end },
         account: { archived: false },
         ...(accountId ? { accountId } : {}),

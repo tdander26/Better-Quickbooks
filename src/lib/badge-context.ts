@@ -14,13 +14,13 @@ interface PageTxn {
 
 const DAY = 86_400_000;
 
-export async function buildBadgeContext(pageTxns: PageTxn[]): Promise<BadgeContext> {
+export async function buildBadgeContext(businessId: string, pageTxns: PageTxn[]): Promise<BadgeContext> {
   const [rules, grouped] = await Promise.all([
-    prisma.rule.findMany({ select: { id: true, name: true } }),
+    prisma.rule.findMany({ where: { businessId }, select: { id: true, name: true } }),
     // A payee seen 3+ times is treated as recurring (rent, payroll, subscriptions…).
     prisma.transaction.groupBy({
       by: ["payee"],
-      where: { payee: { not: "" } },
+      where: { businessId, payee: { not: "" } },
       _count: { _all: true },
     }),
   ]);
@@ -36,7 +36,7 @@ export async function buildBadgeContext(pageTxns: PageTxn[]): Promise<BadgeConte
   if (transferIds.length) {
     const counts = await prisma.transaction.groupBy({
       by: ["transferId"],
-      where: { transferId: { in: transferIds } },
+      where: { businessId, transferId: { in: transferIds } },
       _count: { _all: true },
     });
     for (const c of counts) if (c.transferId && c._count._all >= 2) transferLinked.add(c.transferId);

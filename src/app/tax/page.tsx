@@ -6,6 +6,7 @@
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Info } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader, Card, StatTile, Money, EmptyState, Badge } from "@/components/ui";
 import { formatMoney } from "@/lib/money";
 
@@ -32,6 +33,7 @@ export default async function TaxPage({
 }) {
   const sp = await searchParams;
   const year = resolveYear(sp.year);
+  const ctx = await getBusinessContext();
 
   const start = new Date(year, 0, 1, 0, 0, 0, 0);
   const end = new Date(year, 11, 31, 23, 59, 59, 999);
@@ -41,6 +43,7 @@ export default async function TaxPage({
   const [splits, unmapped, mappedCount] = await Promise.all([
     prisma.split.findMany({
       where: {
+        businessId: ctx.businessId,
         transaction: { is: { postedAt: { gte: start, lte: end } } },
         category: { is: { taxLine: { not: "" }, section: { in: ["income", "expense"] } } },
       },
@@ -50,12 +53,12 @@ export default async function TaxPage({
       },
     }),
     prisma.category.findMany({
-      where: { taxLine: "", section: { in: ["income", "expense"] } },
+      where: { businessId: ctx.businessId, taxLine: "", section: { in: ["income", "expense"] } },
       orderBy: [{ section: "asc" }, { name: "asc" }],
       select: { id: true, name: true, section: true },
     }),
     prisma.category.count({
-      where: { taxLine: { not: "" }, section: { in: ["income", "expense"] } },
+      where: { businessId: ctx.businessId, taxLine: { not: "" }, section: { in: ["income", "expense"] } },
     }),
   ]);
 

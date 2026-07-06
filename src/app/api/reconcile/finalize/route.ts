@@ -7,13 +7,13 @@
 // a Statement. Otherwise it returns 400 with the current difference.
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -25,7 +25,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing account" }, { status: 400 });
   }
 
-  const account = await prisma.account.findUnique({ where: { id: accountId } });
+  const account = await prisma.financialAccount.findFirst({
+    where: { id: accountId, businessId: ctx.businessId },
+  });
   if (!account) {
     return NextResponse.json({ error: "That account doesn't exist" }, { status: 404 });
   }
@@ -43,6 +45,7 @@ export async function POST(req: NextRequest) {
   // Recompute the cleared balance server-side.
   const agg = await prisma.transaction.aggregate({
     where: {
+      businessId: ctx.businessId,
       accountId,
       clearedStatus: { in: ["cleared", "reconciled"] },
       postedAt: { lte: end },
@@ -68,11 +71,12 @@ export async function POST(req: NextRequest) {
   const result = await prisma.$transaction(async (tx) => {
     // Lock the newly-cleared transactions in this statement's window.
     const upd = await tx.transaction.updateMany({
-      where: { accountId, clearedStatus: "cleared", postedAt: { lte: end } },
+      where: { businessId: ctx.businessId, accountId, clearedStatus: "cleared", postedAt: { lte: end } },
       data: { clearedStatus: "reconciled", reconciledAt: now },
     });
     const statement = await tx.statement.create({
       data: {
+        businessId: ctx.businessId,
         accountId,
         endDate: end,
         endingBalanceCents,

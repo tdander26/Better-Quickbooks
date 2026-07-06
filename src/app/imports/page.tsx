@@ -4,13 +4,16 @@
 import { formatDistanceToNow, format } from "date-fns";
 import { FileUp, RefreshCw } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader, Card, StatTile, Badge, EmptyState } from "@/components/ui";
 
 // Reflects live import history; never statically cache.
 export const dynamic = "force-dynamic";
 
 export default async function ImportsPage() {
+  const ctx = await getBusinessContext();
   const batches = await prisma.importBatch.findMany({
+    where: { businessId: ctx.businessId },
     orderBy: { startedAt: "desc" },
   });
 

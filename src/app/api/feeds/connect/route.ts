@@ -4,7 +4,7 @@
 //   the last 90 days so the user sees data right away.
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { getProvider } from "@/lib/feeds";
 import { encrypt } from "@/lib/crypto";
 import { importNormalizedAccounts } from "@/lib/sync";
@@ -17,8 +17,8 @@ function daysAgo(n: number, from: Date = new Date()): Date {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext({ minRole: "admin" });
+  if (ctx instanceof NextResponse) return ctx;
 
   const body = await req.json().catch(() => null);
   const setupToken = String(body?.setupToken ?? "").trim();
@@ -40,10 +40,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 
-  // 2) Persist a single connection (replace any prior one) with the encrypted URL.
-  await prisma.feedConnection.deleteMany({});
+  // 2) Persist a new connection for this business with the encrypted URL.
   const conn = await prisma.feedConnection.create({
     data: {
+      businessId: ctx.businessId,
       provider: "simplefin",
       accessUrlEnc: encrypt(accessUrl),
       status: "connected",
@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
       pending: true,
     });
     const summary = await importNormalizedAccounts(accounts, {
+      businessId: ctx.businessId,
       source: "simplefin",
       connectionId: conn.id,
       providerErrors: errors,

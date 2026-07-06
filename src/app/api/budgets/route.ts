@@ -4,15 +4,15 @@
 //         budget. amountCents <= 0 deletes the budget (clearing the target).
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 
 export const runtime = "nodejs";
 
 const MONTH_RE = /^\d{4}-\d{2}$/;
 
 export async function GET(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const month = req.nextUrl.searchParams.get("month") ?? "";
   if (!MONTH_RE.test(month)) {
@@ -20,15 +20,15 @@ export async function GET(req: NextRequest) {
   }
 
   const budgets = await prisma.budget.findMany({
-    where: { month },
+    where: { businessId: ctx.businessId, month },
     orderBy: { amountCents: "desc" },
   });
   return NextResponse.json({ budgets });
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -49,7 +49,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Enter a valid amount." }, { status: 400 });
   }
 
-  const category = await prisma.category.findUnique({ where: { id: categoryId } });
+  const category = await prisma.category.findFirst({
+    where: { id: categoryId, businessId: ctx.businessId },
+  });
   if (!category) {
     return NextResponse.json({ error: "That category doesn't exist." }, { status: 404 });
   }
@@ -59,14 +61,14 @@ export async function POST(req: NextRequest) {
 
   // Clearing the budget: <= 0 removes the row entirely.
   if (amountCents <= 0) {
-    await prisma.budget.deleteMany({ where: { categoryId, month } });
+    await prisma.budget.deleteMany({ where: { businessId: ctx.businessId, categoryId, month } });
     return NextResponse.json({ ok: true, deleted: true });
   }
 
   const budget = await prisma.budget.upsert({
-    where: { categoryId_month: { categoryId, month } },
+    where: { businessId_categoryId_month: { businessId: ctx.businessId, categoryId, month } },
     update: { amountCents },
-    create: { categoryId, month, amountCents },
+    create: { businessId: ctx.businessId, categoryId, month, amountCents },
   });
   return NextResponse.json({ ok: true, budget });
 }
