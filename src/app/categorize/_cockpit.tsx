@@ -9,7 +9,7 @@
 // Colors, spacing, radii, and typography follow the tokens in the handoff exactly
 // (inline styles with literal hex, so fidelity doesn't depend on utility classes).
 
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { NAV, MOBILE_NAV, isActive } from "@/components/nav";
@@ -105,6 +105,11 @@ export function Cockpit({ data }: { data: CockpitData }) {
   const [tally, setTally] = useState<Record<string, number>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
+
+  // Mobile: a bottom-sheet category picker replaces the desktop inline grid.
+  const isMobile = useIsMobile();
+  const [sheetTxn, setSheetTxn] = useState<CockpitTxn | null>(null);
+  const [sheetQuery, setSheetQuery] = useState("");
 
   // Power-grid keyboard/pointer state.
   const [activeId, setActiveId] = useState<string | null>(data.oneOffs[0]?.id ?? null);
@@ -316,6 +321,57 @@ export function Cockpit({ data }: { data: CockpitData }) {
     setHighlight(0);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
+
+  // ---- Mobile bottom-sheet picker ----
+  const sheetOptions = useMemo(() => {
+    const q = sheetQuery.trim().toLowerCase();
+    if (q) return categories.filter((c) => c.name.toLowerCase().includes(q));
+    if (sheetTxn?.suggestedCategoryId) {
+      const sug = categories.find((c) => c.id === sheetTxn.suggestedCategoryId);
+      if (sug) return [sug, ...categories.filter((c) => c.id !== sug.id)];
+    }
+    return categories;
+  }, [sheetQuery, categories, sheetTxn]);
+
+  const sheetCanCreate =
+    sheetQuery.trim().length > 0 &&
+    !categories.some((c) => c.name.toLowerCase() === sheetQuery.trim().toLowerCase());
+
+  // Advance the sheet to the next one-off (so filing stays a fast, in-place flow).
+  const advanceSheet = useCallback(
+    (txn: CockpitTxn) => {
+      const idx = oneOffs.findIndex((t) => t.id === txn.id);
+      const rest = oneOffs.filter((t) => t.id !== txn.id);
+      setSheetTxn(rest[Math.min(idx, rest.length - 1)] ?? null);
+      setSheetQuery("");
+    },
+    [oneOffs],
+  );
+
+  const pickFromSheet = useCallback(
+    (c: { id: string; name: string }) => {
+      const txn = sheetTxn;
+      if (!txn) return;
+      advanceSheet(txn);
+      void fileOne(txn, c.id, c.name);
+    },
+    [sheetTxn, advanceSheet, fileOne],
+  );
+
+  const createFromSheet = useCallback(() => {
+    const txn = sheetTxn;
+    if (!txn) return;
+    const name = sheetQuery.trim();
+    advanceSheet(txn);
+    void createAndFile(txn, name);
+  }, [sheetTxn, sheetQuery, advanceSheet, createAndFile]);
+
+  const acceptSuggestionMobile = useCallback(() => {
+    const txn = sheetTxn;
+    if (!txn?.suggestedCategoryId || !txn.suggestedCategoryName) return;
+    advanceSheet(txn);
+    void fileOne(txn, txn.suggestedCategoryId, txn.suggestedCategoryName);
+  }, [sheetTxn, advanceSheet, fileOne]);
 
   function onInputKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "ArrowDown") {
@@ -532,7 +588,29 @@ export function Cockpit({ data }: { data: CockpitData }) {
             </div>
           </div>
 
-          {oneOffs.length > 0 ? (
+          {oneOffs.length > 0 && isMobile ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {oneOffs.map((t) => (
+                <MobileTxnCard
+                  key={t.id}
+                  txn={t}
+                  busy={busy}
+                  onOpen={() => {
+                    setSheetTxn(t);
+                    setSheetQuery("");
+                  }}
+                  onAccept={() => {
+                    if (t.suggestedCategoryId && t.suggestedCategoryName) {
+                      void fileOne(t, t.suggestedCategoryId, t.suggestedCategoryName);
+                    } else {
+                      setSheetTxn(t);
+                      setSheetQuery("");
+                    }
+                  }}
+                />
+              ))}
+            </div>
+          ) : oneOffs.length > 0 ? (
             <div className="ck-gridwrap">
             <div className="ck-grid" style={{ border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", background: T.card }}>
               <div
@@ -789,6 +867,22 @@ export function Cockpit({ data }: { data: CockpitData }) {
           );
         })}
       </nav>
+
+      {/* ============ MOBILE CATEGORY BOTTOM SHEET ============ */}
+      {isMobile && sheetTxn && (
+        <MobileCategorySheet
+          txn={sheetTxn}
+          query={sheetQuery}
+          options={sheetOptions}
+          canCreate={sheetCanCreate}
+          busy={busy}
+          onQuery={setSheetQuery}
+          onPick={pickFromSheet}
+          onCreate={createFromSheet}
+          onAccept={acceptSuggestionMobile}
+          onClose={() => setSheetTxn(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1166,6 +1260,330 @@ function GridRow({
 
       <span style={{ color: T.dim, textAlign: "center" }}>·</span>
     </div>
+  );
+}
+
+// Tracks whether the viewport is phone-width. Defaults to false so SSR matches
+// the desktop layout; flips after mount via matchMedia (no hydration mismatch).
+function useIsMobile(breakpoint = 900): boolean {
+  const [mobile, setMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const onChange = () => setMobile(mq.matches);
+    onChange();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [breakpoint]);
+  return mobile;
+}
+
+// ---- Mobile one-off card (replaces a Power-grid row on phones) --------------
+function MobileTxnCard({
+  txn,
+  busy,
+  onOpen,
+  onAccept,
+}: {
+  txn: CockpitTxn;
+  busy: boolean;
+  onOpen: () => void;
+  onAccept: () => void;
+}) {
+  const hasSug = !!txn.suggestedCategoryName;
+  const tint =
+    txn.confidence === "high"
+      ? { bg: T.tintBg, border: T.tintBorder, text: T.accent }
+      : txn.confidence === "medium"
+        ? { bg: "#F5EEDA", border: T.amberBorder, text: T.amber }
+        : { bg: "transparent", border: T.dim, text: T.faint };
+  return (
+    <div
+      onClick={onOpen}
+      style={{
+        border: `1px solid ${T.border}`,
+        borderRadius: 12,
+        background: T.card,
+        padding: "12px 14px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        boxShadow: "0 1px 2px rgba(28,26,23,0.04)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+        <span style={{ fontWeight: 600, fontSize: 14 }}>{txn.payee}</span>
+        <span
+          style={{
+            fontVariantNumeric: "tabular-nums",
+            fontWeight: 600,
+            color: txn.inflow ? T.accent : T.ink,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {txn.amount}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: T.faint }}>
+        {txn.date} · {txn.meta}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {hasSug ? (
+          <>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAccept();
+              }}
+              disabled={busy}
+              style={{
+                flex: 1,
+                textAlign: "left",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+                fontFamily: "inherit",
+                fontSize: 13,
+                fontWeight: 600,
+                padding: "10px 12px",
+                borderRadius: 9,
+                border: `1px solid ${tint.border}`,
+                background: tint.bg,
+                color: tint.text,
+                cursor: "pointer",
+              }}
+            >
+              <span>{txn.suggestedCategoryName}</span>
+              <span style={{ fontSize: 12 }}>File ✓</span>
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpen();
+              }}
+              style={{
+                fontFamily: "inherit",
+                fontSize: 13,
+                fontWeight: 500,
+                padding: "10px 14px",
+                borderRadius: 9,
+                border: `1px solid ${T.dim}`,
+                background: "transparent",
+                color: T.muted,
+                cursor: "pointer",
+              }}
+            >
+              Change
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen();
+            }}
+            style={{
+              flex: 1,
+              textAlign: "left",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              fontFamily: "inherit",
+              fontSize: 13,
+              fontWeight: 500,
+              padding: "10px 12px",
+              borderRadius: 9,
+              border: `1px dashed ${T.dim}`,
+              background: "transparent",
+              color: T.faint,
+              cursor: "pointer",
+            }}
+          >
+            <span>Choose category</span>
+            <span>›</span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---- Mobile category bottom sheet ------------------------------------------
+function MobileCategorySheet({
+  txn,
+  query,
+  options,
+  canCreate,
+  busy,
+  onQuery,
+  onPick,
+  onCreate,
+  onAccept,
+  onClose,
+}: {
+  txn: CockpitTxn;
+  query: string;
+  options: { id: string; name: string }[];
+  canCreate: boolean;
+  busy: boolean;
+  onQuery: (v: string) => void;
+  onPick: (c: { id: string; name: string }) => void;
+  onCreate: () => void;
+  onAccept: () => void;
+  onClose: () => void;
+}) {
+  const hasSug = !!txn.suggestedCategoryName;
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,26,23,0.4)", zIndex: 55 }} />
+      <div
+        style={{
+          position: "fixed",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 60,
+          background: T.card,
+          borderRadius: "16px 16px 0 0",
+          maxHeight: "84vh",
+          display: "flex",
+          flexDirection: "column",
+          boxShadow: "0 -12px 40px rgba(28,26,23,0.22)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "center", padding: "8px 0 4px" }}>
+          <span style={{ width: 38, height: 4, borderRadius: 99, background: T.dim }} />
+        </div>
+        <div style={{ padding: "6px 18px 12px", borderBottom: `1px solid ${T.hair}` }}>
+          <div style={{ ...uppercaseLabel, paddingBottom: 8 }}>File transaction</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+            <span style={{ fontWeight: 600, fontSize: 15 }}>{txn.payee}</span>
+            <span
+              style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600, color: txn.inflow ? T.accent : T.ink }}
+            >
+              {txn.amount}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: T.faint, paddingTop: 2 }}>
+            {txn.date} · {txn.meta}
+          </div>
+          {hasSug && (
+            <button
+              onClick={onAccept}
+              disabled={busy}
+              style={{
+                marginTop: 12,
+                width: "100%",
+                fontFamily: "inherit",
+                fontSize: 14,
+                fontWeight: 600,
+                padding: "11px 14px",
+                borderRadius: 10,
+                border: "none",
+                background: T.accent,
+                color: "#FAF9F6",
+                cursor: "pointer",
+              }}
+            >
+              Accept: {txn.suggestedCategoryName}
+              {txn.reason ? ` · ${txn.reason}` : ""}
+            </button>
+          )}
+        </div>
+        <div style={{ padding: "12px 14px 8px" }}>
+          <input
+            value={query}
+            onChange={(e) => onQuery(e.target.value)}
+            placeholder="Search categories…"
+            style={{
+              width: "100%",
+              fontFamily: "inherit",
+              fontSize: 15,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: `1.5px solid ${T.border}`,
+              background: T.bg,
+              color: T.ink,
+              outline: "none",
+            }}
+          />
+        </div>
+        <div style={{ overflowY: "auto", padding: "0 8px 8px", flex: 1 }}>
+          {options.map((c) => {
+            const isSug = c.id === txn.suggestedCategoryId && !query.trim();
+            return (
+              <button
+                key={c.id}
+                onClick={() => onPick(c)}
+                disabled={busy}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  fontFamily: "inherit",
+                  fontSize: 15,
+                  padding: "13px 12px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "transparent",
+                  color: T.ink,
+                  cursor: "pointer",
+                  borderBottom: `1px solid ${T.hair}`,
+                }}
+              >
+                <span>{highlightMatch(c.name, query)}</span>
+                {isSug && <span style={{ fontSize: 11, color: T.accent, fontWeight: 600 }}>suggested</span>}
+              </button>
+            );
+          })}
+          {canCreate && (
+            <button
+              onClick={onCreate}
+              disabled={busy}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                fontFamily: "inherit",
+                fontSize: 14,
+                padding: "13px 12px",
+                borderRadius: 8,
+                border: "none",
+                background: "transparent",
+                color: T.accent,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              + New category “{query.trim()}”
+            </button>
+          )}
+          {options.length === 0 && !canCreate && (
+            <div style={{ padding: "16px 12px", color: T.faint, fontSize: 13 }}>No matches</div>
+          )}
+        </div>
+        <div style={{ padding: "10px 14px", borderTop: `1px solid ${T.hair}` }}>
+          <button
+            onClick={onClose}
+            style={{
+              width: "100%",
+              fontFamily: "inherit",
+              fontSize: 14,
+              fontWeight: 500,
+              padding: "11px",
+              borderRadius: 10,
+              border: `1px solid ${T.dim}`,
+              background: "transparent",
+              color: T.muted,
+              cursor: "pointer",
+            }}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 
