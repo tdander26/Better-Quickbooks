@@ -21,62 +21,212 @@ datasource db {
   url      = env("NETLIFY_DATABASE_URL")
 }
 
-model Account {
-  id             String   @id @default(cuid())
-  name           String
-  institution    String
-  type           String
-  classification String
-  currency       String   @default("USD")
+// ============================================================================
+// Auth & tenancy
+// ============================================================================
 
+/// A person who logs in. May belong to several Businesses via Membership.
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String? // credentials provider (bcrypt); null for OAuth-only
+
+  accounts    Account[]
+  sessions    Session[]
+  memberships Membership[]
+  invitesSent Invite[]     @relation("InviteInviter")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// NextAuth OAuth-account link table. The adapter REQUIRES a model named
+/// `Account`; it is mapped to a distinct physical table so it does not collide
+/// with the financial account table (FinancialAccount, which keeps table name "Account").
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("auth_accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("auth_sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("auth_verification_tokens")
+}
+
+/// A tenant: one business/company's books. All financial data is scoped here.
+model Business {
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
+  // Billing (Stripe). One subscription per business.
+  stripeCustomerId     String?   @unique
+  stripeSubscriptionId String?   @unique
+  stripePriceId        String?
+  plan                 String    @default("free")
+  subscriptionStatus   String    @default("trialing") // Stripe status
+  currentPeriodEnd     DateTime?
+  trialEndsAt          DateTime?
+
+  memberships       Membership[]
+  invites           Invite[]
+  financialAccounts FinancialAccount[]
+  transactions      Transaction[]
+  splits            Split[]
+  categories        Category[]
+  rules             Rule[]
+  feedConnections   FeedConnection[]
+  importBatches     ImportBatch[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Join between User and Business, carrying the user's role in that business.
+model Membership {
+  id         String   @id @default(cuid())
+  userId     String
+  businessId String
+  role       String   @default("member") // "owner" | "admin" | "member"
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, businessId])
+  @@index([businessId])
+}
+
+/// A pending invitation to join a Business.
+model Invite {
+  id          String   @id @default(cuid())
+  businessId  String
+  email       String
+  role        String   @default("member")
+  token       String   @unique
+  status      String   @default("pending") // "pending" | "accepted" | "revoked" | "expired"
+  invitedById String
+  expiresAt   DateTime
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invitedBy   User     @relation("InviteInviter", fields: [invitedById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([businessId])
+  @@index([email])
+}
+
+// ============================================================================
+// Financial domain (all tenant-scoped)
+// ============================================================================
+
+/// A real-world financial account (a bank checking account or a credit card).
+/// Physically still the "Account" table; renamed in Prisma to free the name for
+/// NextAuth's Account model.
+model FinancialAccount {
+  id             String @id @default(cuid())
+  businessId     String
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name           String
+  institution    String // "Chase", "Ally", etc.
+  type           String // AccountType: "bank" | "credit_card"
+  classification String // AccountClass: "asset" | "liability"
+  currency       String @default("USD")
+
+  // Opening balance anchors the ledger; running balance = opening + sum(txn amounts).
   openingBalanceCents Int      @default(0)
   openingDate         DateTime @default(now())
 
+  // Authoritative figures reported by the bank via SimpleFIN (for reconciliation).
   reportedBalanceCents Int?
-  balanceDate          DateTime?
+  balanceDate          DateTime? // SimpleFIN "balance-date" (bank's true as-of date)
 
-  simplefinAccountId String? @unique
+  // Feed linkage. simplefinAccountId is the provider's stable account id.
+  simplefinAccountId String?
   connectionId       String?
   connection         FeedConnection? @relation(fields: [connectionId], references: [id])
 
-  archived  Boolean  @default(false)
-  sortOrder Int      @default(0)
+  archived  Boolean @default(false)
+  sortOrder Int     @default(0)
 
   transactions Transaction[]
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([businessId, simplefinAccountId])
+  @@index([businessId])
+  @@map("Account")
 }
 
+/// A single transaction on one account. Positive amount = inflow, negative = outflow
+/// (matching SimpleFIN's convention). Sum of its splits always equals `amountCents`.
 model Transaction {
-  id            String   @id @default(cuid())
-  accountId     String
-  account       Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  id         String           @id @default(cuid())
+  businessId String
+  business   Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  accountId  String
+  account    FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
-  postedAt      DateTime
-  amountCents   Int
-  payee         String   @default("")
-  description   String   @default("")
-  memo          String   @default("")
-  pending       Boolean  @default(false)
+  postedAt    DateTime
+  amountCents Int
+  payee       String   @default("") // cleaned merchant / counterparty
+  description String   @default("") // original feed text (SimpleFIN description)
+  memo        String   @default("")
+  pending     Boolean  @default(false)
 
-  providerTxnId String?  @unique
+  providerTxnId String? // SimpleFIN transaction id -> dedupe (per business)
   importBatchId String?
   importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
 
-  transferId    String?
-  reviewed      Boolean  @default(false)
-  notes         String   @default("")
+  transferId String? // links the two sides of an internal transfer
+  reviewed   Boolean @default(false) // user has confirmed the categorization
+  notes      String  @default("")
 
   splits    Split[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([businessId, providerTxnId])
+  @@index([businessId, postedAt])
   @@index([accountId, postedAt])
   @@index([transferId])
 }
 
+/// One line of a transaction's categorization. A simple transaction has exactly
+/// one split; a split transaction has several whose amounts sum to the parent.
 model Split {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
+  businessId    String
+  business      Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
   transactionId String
   transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
 
@@ -84,24 +234,30 @@ model Split {
   category   Category? @relation(fields: [categoryId], references: [id])
 
   amountCents Int
-  memo        String  @default("")
+  memo        String @default("")
 
+  @@index([businessId])
   @@index([categoryId])
   @@index([transactionId])
 }
 
+/// The chart of accounts. `section` places each category in the correct report:
+/// INCOME/EXPENSE -> Profit & Loss; ASSET/LIABILITY/EQUITY -> Balance Sheet;
+/// TRANSFER -> excluded from both (internal money movement).
 model Category {
-  id       String  @id @default(cuid())
-  name     String
-  section  String
-  icon     String  @default("")
-  color    String  @default("")
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name       String
+  section    String // Section: "income" | "expense" | "asset" | "liability" | "equity" | "transfer"
+  icon       String   @default("")
+  color      String   @default("")
 
   parentId String?
   parent   Category?  @relation("SubCategories", fields: [parentId], references: [id])
   children Category[] @relation("SubCategories")
 
-  isSystem  Boolean @default(false)
+  isSystem  Boolean @default(false) // seeded categories that shouldn't be deleted (e.g. Uncategorized)
   sortOrder Int     @default(0)
 
   splits Split[]
@@ -110,17 +266,23 @@ model Category {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([name, parentId])
+  @@unique([businessId, name, parentId])
+  @@index([businessId])
 }
 
+/// A categorization rule. On import (and on demand) transactions are matched
+/// against enabled rules ordered by `priority` (lower runs first); the first
+/// match assigns `category`.
 model Rule {
-  id       String  @id @default(cuid())
-  name     String
-  priority Int     @default(100)
-  enabled  Boolean @default(true)
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name       String
+  priority   Int      @default(100)
+  enabled    Boolean  @default(true)
 
-  matchField String
-  operator   String
+  matchField String // MatchField: "payee" | "description" | "amount" | "account"
+  operator   String // Operator: "contains" | "equals" | "starts_with" | "ends_with" | "regex" | "gt" | "lt"
   value      String
 
   categoryId String
@@ -131,31 +293,45 @@ model Rule {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([businessId])
   @@index([priority])
 }
 
+/// A connection to a bank-feed provider. v1 supports SimpleFIN; multiple
+/// connections per business are allowed.
 model FeedConnection {
-  id           String   @id @default(cuid())
-  provider     String   @default("simplefin")
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  provider   String   @default("simplefin") // Provider: "simplefin" | "teller"
 
+  // The SimpleFIN access URL (https://user:pass@host/path) is encrypted at rest
+  // with AES-256-GCM (see src/lib/crypto.ts). Never stored in plaintext.
   accessUrlEnc String
 
   status       String    @default("connected")
   lastSyncedAt DateTime?
   lastError    String?
 
-  accounts  Account[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  accounts  FinancialAccount[]
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@index([businessId])
 }
 
+/// Records one import run (SimpleFIN refresh or CSV upload) for auditability.
 model ImportBatch {
-  id        String   @id @default(cuid())
-  source    String
-  startedAt DateTime @default(now())
-  imported  Int      @default(0)
-  skipped   Int      @default(0)
-  note      String   @default("")
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  source     String // "simplefin" | "csv"
+  startedAt  DateTime @default(now())
+  imported   Int      @default(0)
+  skipped    Int      @default(0)
+  note       String   @default("")
 
   transactions Transaction[]
+
+  @@index([businessId])
 }

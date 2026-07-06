@@ -2,11 +2,14 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { signIn } from "next-auth/react";
+import Link from "next/link";
 import { Wallet, Loader2 } from "lucide-react";
 
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -15,20 +18,19 @@ function LoginForm() {
     e.preventDefault();
     setLoading(true);
     setError("");
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
+    const res = await signIn("credentials", { email, password, redirect: false });
     setLoading(false);
-    if (res.ok) {
+    if (res?.ok) {
       router.push(params.get("next") || "/");
       router.refresh();
     } else {
-      setError("Incorrect password. Try again.");
+      setError("Incorrect email or password.");
       setPassword("");
     }
   }
+
+  const next = params.get("next");
+  const signupHref = next ? `/signup?next=${encodeURIComponent(next)}` : "/signup";
 
   return (
     <div className="grid min-h-dvh place-items-center px-4">
@@ -38,25 +40,39 @@ function LoginForm() {
             <Wallet size={26} />
           </div>
           <div>
-            <h1 className="text-lg font-semibold">Better Books</h1>
-            <p className="muted text-sm">Enter your PIN or password to continue</p>
+            <h1 className="text-lg font-semibold">Welcome back</h1>
+            <p className="muted text-sm">Sign in to Better Books</p>
           </div>
         </div>
         <form onSubmit={onSubmit} className="flex flex-col gap-3">
           <input
             autoFocus
+            type="email"
+            autoComplete="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="input"
+          />
+          <input
             type="password"
-            inputMode="text"
+            autoComplete="current-password"
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="input text-center"
+            className="input"
           />
           {error && <p className="text-center text-sm text-rose-500">{error}</p>}
-          <button className="btn-primary" disabled={loading || !password}>
-            {loading ? <Loader2 className="animate-spin" size={16} /> : "Unlock"}
+          <button className="btn-primary" disabled={loading || !email || !password}>
+            {loading ? <Loader2 className="animate-spin" size={16} /> : "Sign in"}
           </button>
         </form>
+        <p className="muted mt-5 text-center text-sm">
+          New to Better Books?{" "}
+          <Link href={signupHref} className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+            Create an account
+          </Link>
+        </p>
       </div>
     </div>
   );

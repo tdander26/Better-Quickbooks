@@ -27,6 +27,7 @@ import {
   monthlyTrend,
   accountBalances,
 } from "@/lib/reports";
+import { getBusinessContext } from "@/lib/session";
 import { UNCATEGORIZED } from "@/lib/types";
 import { formatMoney, formatMoneyCompact } from "@/lib/money";
 import { Card, PageHeader, Money, StatTile, Badge, EmptyState } from "@/components/ui";
@@ -77,6 +78,9 @@ function PanelHeader({
 }
 
 export default async function Dashboard() {
+  const ctx = await getBusinessContext();
+  const businessId = ctx.businessId;
+
   const now = new Date();
   const monthStart = startOfMonth(now);
   const monthEnd = endOfMonth(now);
@@ -86,25 +90,27 @@ export default async function Dashboard() {
   // system "Uncategorized" category, and at least one such split exists.
   const [nw, pl, spending, trend, balances, recent, uncategorizedCount, pendingCount] =
     await Promise.all([
-      netWorth(),
-      profitAndLoss(monthStart, monthEnd),
-      spendingByCategory(monthStart, monthEnd),
-      monthlyTrend(6),
-      accountBalances(),
+      netWorth(businessId),
+      profitAndLoss(businessId, monthStart, monthEnd),
+      spendingByCategory(businessId, monthStart, monthEnd),
+      monthlyTrend(businessId, 6),
+      accountBalances(businessId),
       prisma.transaction.findMany({
+        where: { businessId },
         take: 6,
         orderBy: { postedAt: "desc" },
         include: { account: true, splits: { include: { category: true } } },
       }),
       prisma.transaction.count({
         where: {
+          businessId,
           splits: {
             some: { OR: [{ categoryId: null }, { category: { is: { name: UNCATEGORIZED } } }] },
             every: { OR: [{ categoryId: null }, { category: { is: { name: UNCATEGORIZED } } }] },
           },
         },
       }),
-      prisma.transaction.count({ where: { pending: true } }),
+      prisma.transaction.count({ where: { businessId, pending: true } }),
     ]);
 
   // Donut: top categories by spend + an aggregated "Other" bucket.

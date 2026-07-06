@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { formatMoney } from "@/lib/money";
 import { TRANSFER_CATEGORY } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
@@ -19,11 +19,14 @@ import type { Prisma } from "@prisma/client";
 export const runtime = "nodejs";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
-  const txn = await prisma.transaction.findUnique({ where: { id }, include: { splits: true } });
+  const txn = await prisma.transaction.findFirst({
+    where: { id, businessId: ctx.businessId },
+    include: { splits: true },
+  });
   if (!txn) return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
 
   const body = await req.json().catch(() => null);
@@ -43,13 +46,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (body.transfer !== undefined) {
     if (body.transfer === false) {
       const transaction = await prisma.transaction.update({
-        where: { id },
+        where: { id, businessId: ctx.businessId },
         data: { ...scalar, transferId: null, reviewed: reviewedFlag(txn.reviewed) },
       });
       return NextResponse.json({ ok: true, transaction });
     }
 
-    const transferCat = await prisma.category.findFirst({ where: { name: TRANSFER_CATEGORY } });
+    const transferCat = await prisma.category.findFirst({
+      where: { businessId: ctx.businessId, name: TRANSFER_CATEGORY },
+    });
 
     // Look for a single, unambiguous opposite-signed counterpart on another
     // account within a few days — the other side of the same transfer.
@@ -59,6 +64,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     windowEnd.setDate(windowEnd.getDate() + 5);
     const candidates = await prisma.transaction.findMany({
       where: {
+        businessId: ctx.businessId,
         id: { not: txn.id },
         accountId: { not: txn.accountId },
         amountCents: -txn.amountCents,
@@ -71,25 +77,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const transferId = txn.transferId ?? counterpart?.transferId ?? randomUUID();
 
     await prisma.$transaction(async (tx) => {
-      await tx.split.deleteMany({ where: { transactionId: txn.id } });
+      await tx.split.deleteMany({ where: { transactionId: txn.id, businessId: ctx.businessId } });
       await tx.split.create({
-        data: { transactionId: txn.id, amountCents: txn.amountCents, categoryId: transferCat?.id ?? null },
+        data: { businessId: ctx.businessId, transactionId: txn.id, amountCents: txn.amountCents, categoryId: transferCat?.id ?? null },
       });
       await tx.transaction.update({
-        where: { id: txn.id },
+        where: { id: txn.id, businessId: ctx.businessId },
         data: { ...scalar, transferId, reviewed: reviewedFlag(true) },
       });
       if (counterpart) {
-        await tx.split.deleteMany({ where: { transactionId: counterpart.id } });
+        await tx.split.deleteMany({ where: { transactionId: counterpart.id, businessId: ctx.businessId } });
         await tx.split.create({
           data: {
+            businessId: ctx.businessId,
             transactionId: counterpart.id,
             amountCents: counterpart.amountCents,
             categoryId: transferCat?.id ?? null,
           },
         });
         await tx.transaction.update({
-          where: { id: counterpart.id },
+          where: { id: counterpart.id, businessId: ctx.businessId },
           data: { transferId, reviewed: true },
         });
       }
@@ -133,10 +140,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     await prisma.$transaction(async (tx) => {
-      await tx.split.deleteMany({ where: { transactionId: txn.id } });
+      await tx.split.deleteMany({ where: { transactionId: txn.id, businessId: ctx.businessId } });
       for (const s of parsed) {
         await tx.split.create({
           data: {
+            businessId: ctx.businessId,
             transactionId: txn.id,
             categoryId: s.categoryId,
             amountCents: s.amountCents,
@@ -145,7 +153,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         });
       }
       await tx.transaction.update({
-        where: { id: txn.id },
+        where: { id: txn.id, businessId: ctx.businessId },
         data: { ...scalar, reviewed: reviewedFlag(true) },
       });
     });
@@ -157,17 +165,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (body.categoryId !== undefined) {
     const categoryId = body.categoryId ? String(body.categoryId) : null;
     if (categoryId) {
-      const cat = await prisma.category.findUnique({ where: { id: categoryId } });
+      const cat = await prisma.category.findFirst({ where: { id: categoryId, businessId: ctx.businessId } });
       if (!cat) return NextResponse.json({ error: "That category doesn't exist" }, { status: 400 });
     }
 
     await prisma.$transaction(async (tx) => {
-      await tx.split.deleteMany({ where: { transactionId: txn.id } });
+      await tx.split.deleteMany({ where: { transactionId: txn.id, businessId: ctx.businessId } });
       await tx.split.create({
-        data: { transactionId: txn.id, categoryId, amountCents: txn.amountCents },
+        data: { businessId: ctx.businessId, transactionId: txn.id, categoryId, amountCents: txn.amountCents },
       });
       await tx.transaction.update({
-        where: { id: txn.id },
+        where: { id: txn.id, businessId: ctx.businessId },
         data: { ...scalar, reviewed: reviewedFlag(true) },
       });
     });
@@ -182,18 +190,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
-  const transaction = await prisma.transaction.update({ where: { id }, data });
+  const transaction = await prisma.transaction.update({ where: { id, businessId: ctx.businessId }, data });
   return NextResponse.json({ ok: true, transaction });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
-  const existing = await prisma.transaction.findUnique({ where: { id } });
+  const existing = await prisma.transaction.findFirst({ where: { id, businessId: ctx.businessId } });
   if (!existing) return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
 
-  await prisma.transaction.delete({ where: { id } }); // splits cascade
+  await prisma.transaction.delete({ where: { id, businessId: ctx.businessId } }); // splits cascade
   return NextResponse.json({ ok: true });
 }

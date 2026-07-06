@@ -3,24 +3,25 @@
 //   POST — create a top-level category { name, section, icon? }.
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { SECTIONS, type Section } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const categories = await prisma.category.findMany({
+    where: { businessId: ctx.businessId },
     orderBy: [{ section: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
   });
   return NextResponse.json({ categories });
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext({ minRole: "admin" });
+  if (ctx instanceof NextResponse) return ctx;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -39,14 +40,14 @@ export async function POST(req: NextRequest) {
 
   // Place new categories at the end of their section.
   const last = await prisma.category.findFirst({
-    where: { section },
+    where: { businessId: ctx.businessId, section },
     orderBy: { sortOrder: "desc" },
   });
   const sortOrder = (last?.sortOrder ?? 0) + 1;
 
   try {
     const category = await prisma.category.create({
-      data: { name, section, icon, parentId: null, sortOrder },
+      data: { businessId: ctx.businessId, name, section, icon, parentId: null, sortOrder },
     });
     return NextResponse.json({ ok: true, category }, { status: 201 });
   } catch (e) {

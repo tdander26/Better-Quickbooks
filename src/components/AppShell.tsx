@@ -15,6 +15,17 @@ import {
   Wallet,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { BusinessSwitcher } from "@/components/BusinessSwitcher";
+import { SignOutButton } from "@/components/SignOutButton";
+import type { ShellData } from "@/lib/nav-types";
+
+// Routes that render their own full-screen chrome (auth / onboarding) — the app
+// shell is hidden on these.
+const BARE_ROUTES = ["/login", "/signup", "/select-business", "/business/new", "/invite"];
+
+function isBareRoute(pathname: string) {
+  return BARE_ROUTES.some((p) => pathname === p || pathname.startsWith(p + "/"));
+}
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -34,9 +45,9 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, shell }: { children: ReactNode; shell: ShellData | null }) {
   const pathname = usePathname();
-  if (pathname === "/login") return <>{children}</>;
+  if (isBareRoute(pathname) || !shell) return <>{children}</>;
 
   return (
     <div className="min-h-dvh md:flex">
@@ -45,14 +56,17 @@ export function AppShell({ children }: { children: ReactNode }) {
         className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r px-3 py-5 md:flex"
         style={{ borderColor: "var(--border)" }}
       >
-        <div className="mb-6 flex items-center gap-2 px-2">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-b from-brand-400 to-brand-600 text-white">
-            <Wallet size={18} />
-          </div>
-          <div className="leading-tight">
-            <div className="text-sm font-semibold">Better Books</div>
-            <div className="muted text-xs">Dr. Anderson</div>
-          </div>
+        <div className="mb-5">
+          {shell.businesses.length > 0 ? (
+            <BusinessSwitcher businesses={shell.businesses} activeBusinessId={shell.activeBusinessId} />
+          ) : (
+            <div className="flex items-center gap-2 px-2">
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-b from-brand-400 to-brand-600 text-white">
+                <Wallet size={18} />
+              </div>
+              <div className="text-sm font-semibold">Better Books</div>
+            </div>
+          )}
         </div>
         <nav className="flex flex-col gap-1">
           {NAV.map((item) => {
@@ -73,11 +87,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
-        <form action="/api/auth/logout" method="post" className="mt-auto px-1">
-          <button className="muted text-xs hover:underline" type="submit">
-            Sign out
-          </button>
-        </form>
+        <div className="mt-auto flex flex-col gap-1 px-1 pt-3">
+          <div className="muted truncate px-1 text-xs" title={shell.user.email}>
+            {shell.user.email}
+          </div>
+          <SignOutButton className="muted inline-flex items-center gap-1.5 text-xs hover:underline" />
+        </div>
       </aside>
 
       {/* Main column */}

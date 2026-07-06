@@ -1,9 +1,12 @@
-// Reusable demo-data seeder: chart of accounts, default auto-categorization
-// rules, and realistic mock Chase/Ally transactions. Shared by the CLI
-// (prisma/seed.ts) and the guarded /api/admin/seed endpoint used after a fresh
-// deploy. Uses the shared prisma singleton.
+// Reusable seeders. Two entry points:
+//   - seedBusinessDefaults(businessId): chart of accounts + default rules for a
+//     newly-created business (no demo data). Called on business creation.
+//   - seedDemoData(): wipes everything and seeds a demo user + business with
+//     realistic mock Chase/Ally transactions. Dev only (db:reset, /api/admin/seed).
+// Uses the shared prisma singleton.
 
 import { prisma } from "@/lib/db";
+import { hashPassword } from "@/lib/password";
 
 const c = (dollars: number) => Math.round(dollars * 100);
 
@@ -70,28 +73,16 @@ const RULES: {
   { name: "Card processing (Square)", priority: 82, matchField: "description", operator: "contains", value: "square", category: "Patient Revenue" },
 ];
 
-export interface SeedResult {
-  categories: number;
-  rules: number;
-  accounts: number;
-  transactions: number;
-}
-
-/** Wipes existing data and seeds demo data. Returns counts. */
-export async function seedDemoData(): Promise<SeedResult> {
-  await prisma.split.deleteMany();
-  await prisma.transaction.deleteMany();
-  await prisma.rule.deleteMany();
-  await prisma.importBatch.deleteMany();
-  await prisma.account.deleteMany();
-  await prisma.category.deleteMany();
-  await prisma.feedConnection.deleteMany();
-
+/**
+ * Seed a newly-created business's chart of accounts + default rules.
+ * No demo accounts/transactions. Returns the category name -> id map.
+ */
+export async function seedBusinessDefaults(businessId: string): Promise<Map<string, string>> {
   const catId = new Map<string, string>();
   for (let i = 0; i < CATEGORIES.length; i++) {
     const cat = CATEGORIES[i];
     const created = await prisma.category.create({
-      data: { name: cat.name, section: cat.section, icon: cat.icon ?? "", isSystem: cat.system ?? false, sortOrder: i },
+      data: { businessId, name: cat.name, section: cat.section, icon: cat.icon ?? "", isSystem: cat.system ?? false, sortOrder: i },
     });
     catId.set(cat.name, created.id);
   }
@@ -99,6 +90,7 @@ export async function seedDemoData(): Promise<SeedResult> {
   for (const r of RULES) {
     await prisma.rule.create({
       data: {
+        businessId,
         name: r.name,
         priority: r.priority,
         matchField: r.matchField,
@@ -110,10 +102,55 @@ export async function seedDemoData(): Promise<SeedResult> {
     });
   }
 
-  const chase = await prisma.account.create({ data: { name: "Total Checking", institution: "Chase", type: "bank", classification: "asset", openingBalanceCents: c(5000), openingDate: new Date("2026-04-01"), reportedBalanceCents: c(8420.55), balanceDate: new Date("2026-07-02"), sortOrder: 0 } });
-  const allyChecking = await prisma.account.create({ data: { name: "Interest Checking", institution: "Ally", type: "bank", classification: "asset", openingBalanceCents: c(3000), openingDate: new Date("2026-04-01"), reportedBalanceCents: c(4115.2), balanceDate: new Date("2026-07-02"), sortOrder: 1 } });
-  const allySavings = await prisma.account.create({ data: { name: "Online Savings", institution: "Ally", type: "bank", classification: "asset", openingBalanceCents: c(20000), openingDate: new Date("2026-04-01"), reportedBalanceCents: c(20180.4), balanceDate: new Date("2026-07-02"), sortOrder: 2 } });
-  const sapphire = await prisma.account.create({ data: { name: "Sapphire Card", institution: "Chase", type: "credit_card", classification: "liability", openingBalanceCents: c(0), openingDate: new Date("2026-04-01"), reportedBalanceCents: c(-1840.32), balanceDate: new Date("2026-07-02"), sortOrder: 3 } });
+  return catId;
+}
+
+export interface SeedResult {
+  user: string;
+  business: string;
+  categories: number;
+  rules: number;
+  accounts: number;
+  transactions: number;
+}
+
+/**
+ * Wipes ALL data and seeds a demo user + business with demo data. Dev only.
+ * Credentials come from SEED_USER_EMAIL / SEED_USER_PASSWORD (defaults below).
+ */
+export async function seedDemoData(): Promise<SeedResult> {
+  // Order respects FK dependencies (cascades would cover most, but be explicit).
+  await prisma.split.deleteMany();
+  await prisma.transaction.deleteMany();
+  await prisma.rule.deleteMany();
+  await prisma.importBatch.deleteMany();
+  await prisma.financialAccount.deleteMany();
+  await prisma.category.deleteMany();
+  await prisma.feedConnection.deleteMany();
+  await prisma.invite.deleteMany();
+  await prisma.membership.deleteMany();
+  await prisma.business.deleteMany();
+  await prisma.session.deleteMany();
+  await prisma.account.deleteMany();
+  await prisma.user.deleteMany();
+
+  const email = (process.env.SEED_USER_EMAIL || "demo@betterbooks.app").toLowerCase();
+  const password = process.env.SEED_USER_PASSWORD || "demo1234";
+  const user = await prisma.user.create({
+    data: { email, name: "Demo Owner", passwordHash: await hashPassword(password) },
+  });
+  const business = await prisma.business.create({
+    data: { name: "Anderson Family Practice", slug: "demo", plan: "pro", subscriptionStatus: "active" },
+  });
+  await prisma.membership.create({ data: { userId: user.id, businessId: business.id, role: "owner" } });
+  const businessId = business.id;
+
+  const catId = await seedBusinessDefaults(businessId);
+
+  const chase = await prisma.financialAccount.create({ data: { businessId, name: "Total Checking", institution: "Chase", type: "bank", classification: "asset", openingBalanceCents: c(5000), openingDate: new Date("2026-04-01"), reportedBalanceCents: c(8420.55), balanceDate: new Date("2026-07-02"), sortOrder: 0 } });
+  const allyChecking = await prisma.financialAccount.create({ data: { businessId, name: "Interest Checking", institution: "Ally", type: "bank", classification: "asset", openingBalanceCents: c(3000), openingDate: new Date("2026-04-01"), reportedBalanceCents: c(4115.2), balanceDate: new Date("2026-07-02"), sortOrder: 1 } });
+  const allySavings = await prisma.financialAccount.create({ data: { businessId, name: "Online Savings", institution: "Ally", type: "bank", classification: "asset", openingBalanceCents: c(20000), openingDate: new Date("2026-04-01"), reportedBalanceCents: c(20180.4), balanceDate: new Date("2026-07-02"), sortOrder: 2 } });
+  const sapphire = await prisma.financialAccount.create({ data: { businessId, name: "Sapphire Card", institution: "Chase", type: "credit_card", classification: "liability", openingBalanceCents: c(0), openingDate: new Date("2026-04-01"), reportedBalanceCents: c(-1840.32), balanceDate: new Date("2026-07-02"), sortOrder: 3 } });
 
   const acctMap: Record<string, string> = { chase: chase.id, allyC: allyChecking.id, allyS: allySavings.id, card: sapphire.id };
   const rows: { acct: string; date: string; amount: number; payee: string; description: string; category?: string; pending?: boolean }[] = [];
@@ -154,6 +191,7 @@ export async function seedDemoData(): Promise<SeedResult> {
     const amountCents = c(Math.round(r.amount * 100) / 100);
     await prisma.transaction.create({
       data: {
+        businessId,
         accountId: acctMap[r.acct],
         postedAt: new Date(r.date + "T12:00:00"),
         amountCents,
@@ -161,11 +199,11 @@ export async function seedDemoData(): Promise<SeedResult> {
         description: r.description,
         pending: r.pending ?? false,
         reviewed: r.category ? true : false,
-        splits: { create: [{ amountCents, categoryId }] },
+        splits: { create: [{ businessId, amountCents, categoryId }] },
       },
     });
     count++;
   }
 
-  return { categories: CATEGORIES.length, rules: RULES.length, accounts: 4, transactions: count };
+  return { user: email, business: business.name, categories: CATEGORIES.length, rules: RULES.length, accounts: 4, transactions: count };
 }

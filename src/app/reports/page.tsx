@@ -15,6 +15,7 @@ import {
   type BalanceSheet,
 } from "@/lib/reports";
 import { formatMoney } from "@/lib/money";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader, Card, StatTile, Money, EmptyState } from "@/components/ui";
 import { ReportControls } from "./_controls";
 
@@ -51,6 +52,7 @@ export default async function ReportsPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
+  const ctx = await getBusinessContext();
   const sp = await searchParams;
   const tab: Tab = sp.tab === "balance" || sp.tab === "cashflow" ? sp.tab : "pl";
 
@@ -66,11 +68,11 @@ export default async function ReportsPage({
   // Only the active tab's data is fetched (short-circuits before the await).
   let content: ReactNode;
   if (tab === "balance") {
-    content = <BalanceReport data={await balanceSheet()} />;
+    content = <BalanceReport data={await balanceSheet(ctx.businessId)} />;
   } else if (tab === "cashflow") {
-    content = <CashFlowReport data={await cashFlow(start, end)} rangeLabel={rangeLabel} />;
+    content = <CashFlowReport data={await cashFlow(ctx.businessId, start, end)} rangeLabel={rangeLabel} />;
   } else {
-    content = <PLReport data={await profitAndLoss(start, end)} rangeLabel={rangeLabel} />;
+    content = <PLReport data={await profitAndLoss(ctx.businessId, start, end)} rangeLabel={rangeLabel} />;
   }
 
   return (

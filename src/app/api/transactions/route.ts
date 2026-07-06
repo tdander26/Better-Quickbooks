@@ -4,7 +4,7 @@
 //          (chosen category or Uncategorized). Dollar input -> integer cents.
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { toCents } from "@/lib/money";
 import { UNCATEGORIZED } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
@@ -74,11 +74,13 @@ function buildWhere(params: URLSearchParams): Prisma.TransactionWhereInput {
 }
 
 export async function GET(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const params = req.nextUrl.searchParams;
-  const where = buildWhere(params);
+  const where: Prisma.TransactionWhereInput = {
+    AND: [{ businessId: ctx.businessId }, buildWhere(params)],
+  };
   const page = Math.max(1, parseInt(params.get("page") ?? "1", 10) || 1);
 
   const [total, transactions] = await Promise.all([
@@ -102,8 +104,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -114,7 +116,9 @@ export async function POST(req: NextRequest) {
   if (!accountId) {
     return NextResponse.json({ error: "Pick an account" }, { status: 400 });
   }
-  const account = await prisma.account.findUnique({ where: { id: accountId } });
+  const account = await prisma.financialAccount.findFirst({
+    where: { id: accountId, businessId: ctx.businessId },
+  });
   if (!account) {
     return NextResponse.json({ error: "That account doesn't exist" }, { status: 404 });
   }
@@ -141,11 +145,15 @@ export async function POST(req: NextRequest) {
   }
 
   // Resolve category: explicit choice, else fall back to Uncategorized.
-  const uncategorized = await prisma.category.findFirst({ where: { name: UNCATEGORIZED } });
+  const uncategorized = await prisma.category.findFirst({
+    where: { businessId: ctx.businessId, name: UNCATEGORIZED },
+  });
   const requestedCategoryId = body.categoryId ? String(body.categoryId) : "";
   let categoryId: string | null = uncategorized?.id ?? null;
   if (requestedCategoryId) {
-    const cat = await prisma.category.findUnique({ where: { id: requestedCategoryId } });
+    const cat = await prisma.category.findFirst({
+      where: { id: requestedCategoryId, businessId: ctx.businessId },
+    });
     if (!cat) return NextResponse.json({ error: "That category doesn't exist" }, { status: 400 });
     categoryId = cat.id;
   }
@@ -155,13 +163,14 @@ export async function POST(req: NextRequest) {
 
   const transaction = await prisma.transaction.create({
     data: {
+      businessId: ctx.businessId,
       accountId,
       postedAt,
       amountCents,
       payee,
       description,
       reviewed,
-      splits: { create: [{ amountCents, categoryId }] },
+      splits: { create: [{ businessId: ctx.businessId, amountCents, categoryId }] },
     },
     include: { account: true, splits: { include: { category: true } } },
   });

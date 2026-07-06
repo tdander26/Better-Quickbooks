@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { TRANSFER_CATEGORY } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -15,8 +15,8 @@ const ACTIONS = ["setCategory", "markReviewed", "markTransfer", "unreview"] as c
 type BulkAction = (typeof ACTIONS)[number];
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   // ------------------------------------------------------------- markReviewed
   if (action === "markReviewed" || action === "unreview") {
     const res = await prisma.transaction.updateMany({
-      where: { id: { in: ids } },
+      where: { businessId: ctx.businessId, id: { in: ids } },
       data: { reviewed: action === "markReviewed" },
     });
     return NextResponse.json({ ok: true, updated: res.count });
@@ -48,12 +48,12 @@ export async function POST(req: NextRequest) {
     if (!categoryId) {
       return NextResponse.json({ error: "Pick a category" }, { status: 400 });
     }
-    const cat = await prisma.category.findUnique({ where: { id: categoryId } });
+    const cat = await prisma.category.findFirst({ where: { id: categoryId, businessId: ctx.businessId } });
     if (!cat) return NextResponse.json({ error: "That category doesn't exist" }, { status: 400 });
 
     // Only touch simple (single-split) transactions; leave splits alone.
     const txns = await prisma.transaction.findMany({
-      where: { id: { in: ids } },
+      where: { businessId: ctx.businessId, id: { in: ids } },
       include: { splits: true },
     });
 
@@ -65,8 +65,8 @@ export async function POST(req: NextRequest) {
         continue;
       }
       await prisma.$transaction([
-        prisma.split.update({ where: { id: t.splits[0].id }, data: { categoryId } }),
-        prisma.transaction.update({ where: { id: t.id }, data: { reviewed: true } }),
+        prisma.split.update({ where: { id: t.splits[0].id, businessId: ctx.businessId }, data: { categoryId } }),
+        prisma.transaction.update({ where: { id: t.id, businessId: ctx.businessId }, data: { reviewed: true } }),
       ]);
       updated++;
     }
@@ -74,18 +74,18 @@ export async function POST(req: NextRequest) {
   }
 
   // ------------------------------------------------------------- markTransfer
-  const transferCat = await prisma.category.findFirst({ where: { name: TRANSFER_CATEGORY } });
-  const txns = await prisma.transaction.findMany({ where: { id: { in: ids } } });
+  const transferCat = await prisma.category.findFirst({ where: { businessId: ctx.businessId, name: TRANSFER_CATEGORY } });
+  const txns = await prisma.transaction.findMany({ where: { businessId: ctx.businessId, id: { in: ids } } });
 
   let updated = 0;
   for (const t of txns) {
     await prisma.$transaction(async (tx) => {
-      await tx.split.deleteMany({ where: { transactionId: t.id } });
+      await tx.split.deleteMany({ where: { transactionId: t.id, businessId: ctx.businessId } });
       await tx.split.create({
-        data: { transactionId: t.id, amountCents: t.amountCents, categoryId: transferCat?.id ?? null },
+        data: { businessId: ctx.businessId, transactionId: t.id, amountCents: t.amountCents, categoryId: transferCat?.id ?? null },
       });
       await tx.transaction.update({
-        where: { id: t.id },
+        where: { id: t.id, businessId: ctx.businessId },
         data: { reviewed: true, transferId: t.transferId ?? randomUUID() },
       });
     });

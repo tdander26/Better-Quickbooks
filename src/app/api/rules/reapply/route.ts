@@ -2,15 +2,15 @@
 // uncategorized and unreviewed. Confirmed splits are never touched.
 // Returns { updated } — the number of transactions recategorized.
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { reapplyRules } from "@/lib/sync";
 
 export const runtime = "nodejs";
 
 export async function POST() {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext({ minRole: "admin" });
+  if (ctx instanceof NextResponse) return ctx;
 
-  const { updated } = await reapplyRules();
+  const { updated } = await reapplyRules(ctx.businessId);
   return NextResponse.json({ updated });
 }

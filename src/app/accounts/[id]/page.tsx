@@ -8,6 +8,7 @@ import { ChevronLeft, Landmark, CreditCard } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { ACCOUNT_TYPE_LABELS, UNCATEGORIZED, type AccountType } from "@/lib/types";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader, Card, StatTile, Money, Badge, EmptyState } from "@/components/ui";
 import { AccountForm } from "../_form";
 
@@ -19,12 +20,13 @@ export default async function AccountPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const ctx = await getBusinessContext();
 
-  const account = await prisma.account.findUnique({ where: { id } });
+  const account = await prisma.financialAccount.findFirst({ where: { id, businessId: ctx.businessId } });
   if (!account) notFound();
 
   const txns = await prisma.transaction.findMany({
-    where: { accountId: id },
+    where: { businessId: ctx.businessId, accountId: id },
     orderBy: { postedAt: "desc" },
     include: { splits: { include: { category: true } } },
   });

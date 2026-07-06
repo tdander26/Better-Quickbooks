@@ -4,18 +4,20 @@
 //            protected). `params` is a Promise in Next 15 and must be awaited.
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { SECTIONS, type Section } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
 
 export const runtime = "nodejs";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext({ minRole: "admin" });
+  if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
-  const existing = await prisma.category.findUnique({ where: { id } });
+  const existing = await prisma.category.findFirst({
+    where: { id, businessId: ctx.businessId },
+  });
   if (!existing) return NextResponse.json({ error: "Category not found." }, { status: 404 });
 
   const body = await req.json().catch(() => null);
@@ -44,6 +46,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   try {
+    // `existing` is already confirmed to belong to this business.
     const category = await prisma.category.update({ where: { id }, data });
     return NextResponse.json({ ok: true, category });
   } catch (e) {
@@ -55,11 +58,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext({ minRole: "admin" });
+  if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
-  const existing = await prisma.category.findUnique({ where: { id } });
+  const existing = await prisma.category.findFirst({
+    where: { id, businessId: ctx.businessId },
+  });
   if (!existing) return NextResponse.json({ error: "Category not found." }, { status: 404 });
 
   if (existing.isSystem) {
@@ -70,7 +75,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   }
 
   // Rules require a category (FK Restrict). Guide the user instead of 500-ing.
-  const ruleCount = await prisma.rule.count({ where: { categoryId: id } });
+  const ruleCount = await prisma.rule.count({
+    where: { categoryId: id, businessId: ctx.businessId },
+  });
   if (ruleCount > 0) {
     return NextResponse.json(
       {

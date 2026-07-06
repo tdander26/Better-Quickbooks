@@ -30,13 +30,14 @@ export interface AccountBalance {
 }
 
 /** Computed running balance per (non-archived) account. */
-export async function accountBalances(): Promise<AccountBalance[]> {
-  const accounts = await prisma.account.findMany({
-    where: { archived: false },
+export async function accountBalances(businessId: string): Promise<AccountBalance[]> {
+  const accounts = await prisma.financialAccount.findMany({
+    where: { businessId, archived: false },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
   const sums = await prisma.transaction.groupBy({
     by: ["accountId"],
+    where: { businessId },
     _sum: { amountCents: true },
   });
   const sumByAccount = new Map(sums.map((s) => [s.accountId, s._sum.amountCents ?? 0]));
@@ -59,8 +60,8 @@ export interface NetWorth {
   netWorthCents: number;
 }
 
-export async function netWorth(): Promise<NetWorth> {
-  const balances = await accountBalances();
+export async function netWorth(businessId: string): Promise<NetWorth> {
+  const balances = await accountBalances(businessId);
   let assets = 0;
   let liabilities = 0;
   for (const b of balances) {
@@ -86,9 +87,10 @@ export interface ProfitAndLoss {
   netIncomeCents: number;
 }
 
-async function splitsInRange(start: Date, end: Date) {
+async function splitsInRange(businessId: string, start: Date, end: Date) {
   return prisma.split.findMany({
     where: {
+      businessId,
       transaction: { postedAt: { gte: start, lte: end }, account: { archived: false } },
     },
     include: { category: true },
@@ -96,8 +98,8 @@ async function splitsInRange(start: Date, end: Date) {
 }
 
 /** Profit & Loss for a date range. */
-export async function profitAndLoss(start: Date, end: Date): Promise<ProfitAndLoss> {
-  const splits = await splitsInRange(start, end);
+export async function profitAndLoss(businessId: string, start: Date, end: Date): Promise<ProfitAndLoss> {
+  const splits = await splitsInRange(businessId, start, end);
   const incomeMap = new Map<string, ReportLine>();
   const expenseMap = new Map<string, ReportLine>();
 
@@ -143,8 +145,8 @@ export interface BalanceSheet {
 }
 
 /** Balance Sheet as of now (current balances). */
-export async function balanceSheet(): Promise<BalanceSheet> {
-  const balances = await accountBalances();
+export async function balanceSheet(businessId: string): Promise<BalanceSheet> {
+  const balances = await accountBalances(businessId);
   const assets = balances.filter((b) => b.classification === "asset");
   const liabilities = balances.filter((b) => b.classification === "liability");
   const totalAssetsCents = assets.reduce((n, b) => n + b.computedCents, 0);
@@ -160,14 +162,14 @@ export async function balanceSheet(): Promise<BalanceSheet> {
 }
 
 /** Spending grouped by expense category for a range (positive magnitudes). */
-export async function spendingByCategory(start: Date, end: Date): Promise<ReportLine[]> {
-  const pl = await profitAndLoss(start, end);
+export async function spendingByCategory(businessId: string, start: Date, end: Date): Promise<ReportLine[]> {
+  const pl = await profitAndLoss(businessId, start, end);
   return pl.expenses;
 }
 
 /** Cash flow: net change grouped by category (income positive, expense negative). */
-export async function cashFlow(start: Date, end: Date) {
-  const pl = await profitAndLoss(start, end);
+export async function cashFlow(businessId: string, start: Date, end: Date) {
+  const pl = await profitAndLoss(businessId, start, end);
   return {
     start,
     end,
@@ -186,14 +188,14 @@ export interface MonthPoint {
 }
 
 /** Monthly income/expense/net for the last N months (for dashboard charts). */
-export async function monthlyTrend(months = 6): Promise<MonthPoint[]> {
+export async function monthlyTrend(businessId: string, months = 6): Promise<MonthPoint[]> {
   const points: MonthPoint[] = [];
   const now = new Date();
   for (let i = months - 1; i >= 0; i--) {
     const d = subMonths(now, i);
     const start = startOfMonth(d);
     const end = endOfMonth(d);
-    const pl = await profitAndLoss(start, end);
+    const pl = await profitAndLoss(businessId, start, end);
     points.push({
       month: format(d, "MMM"),
       key: format(d, "yyyy-MM"),

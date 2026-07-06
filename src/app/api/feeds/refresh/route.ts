@@ -4,7 +4,7 @@
 //   report how many were new vs. skipped.
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { getProvider } from "@/lib/feeds";
 import { decrypt } from "@/lib/crypto";
 import { importNormalizedAccounts } from "@/lib/sync";
@@ -17,10 +17,13 @@ function daysAgo(n: number, from: Date = new Date()): Date {
 }
 
 export async function POST() {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
-  const conn = await prisma.feedConnection.findFirst({ orderBy: { createdAt: "desc" } });
+  const conn = await prisma.feedConnection.findFirst({
+    where: { businessId: ctx.businessId },
+    orderBy: { createdAt: "desc" },
+  });
   if (!conn) {
     return NextResponse.json(
       { error: "Not connected. Add your SimpleFIN setup token first." },
@@ -46,6 +49,7 @@ export async function POST() {
   try {
     const { accounts, errors } = await provider.fetch(accessUrl, { startDate, pending: true });
     const summary = await importNormalizedAccounts(accounts, {
+      businessId: ctx.businessId,
       source: "simplefin",
       connectionId: conn.id,
       providerErrors: errors,

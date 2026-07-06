@@ -1,6 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AppShell } from "@/components/AppShell";
+import { Providers } from "@/components/Providers";
+import { auth } from "@/auth";
+import { listUserBusinesses } from "@/lib/business";
+import type { ShellData } from "@/lib/nav-types";
 
 export const metadata: Metadata = {
   title: "Better Books",
@@ -20,11 +24,26 @@ export const viewport: Viewport = {
   maximumScale: 1,
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const session = await auth();
+  let shell: ShellData | null = null;
+  if (session?.user?.id) {
+    const businesses = await listUserBusinesses(session.user.id);
+    const activeBusinessId =
+      businesses.find((b) => b.id === session.activeBusinessId)?.id ?? businesses[0]?.id ?? null;
+    shell = {
+      user: { email: session.user.email ?? "", name: session.user.name ?? null },
+      businesses,
+      activeBusinessId,
+    };
+  }
+
   return (
     <html lang="en">
       <body>
-        <AppShell>{children}</AppShell>
+        <Providers>
+          <AppShell shell={shell}>{children}</AppShell>
+        </Providers>
       </body>
     </html>
   );
