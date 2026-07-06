@@ -81,6 +81,12 @@ The schema is written to be **Postgres-portable**. To deploy:
 4. Run the migration against your production DB once: `npx prisma db push` (with `DATABASE_URL` pointing at Postgres), then optionally `npm run db:seed`.
 5. Deploy. The build runs `prisma generate` automatically.
 
+### Recommended: Cloudflare Workers + Turso (cheapest, fits free tiers)
+The app is also set up to deploy on **Cloudflare Workers** with **Turso**
+(libSQL) — the cheapest durable stack ($0 to start, ~$5/mo later).
+- **Runbook:** [`docs/DEPLOY_CLOUDFLARE_TURSO.md`](docs/DEPLOY_CLOUDFLARE_TURSO.md)
+- **Host & database cost comparison (1 → 1,000 users):** [`docs/HOSTING_COSTS.md`](docs/HOSTING_COSTS.md)
+
 ## How the accounting works
 
 - Money is stored as **integer cents** everywhere (no floats).
