@@ -3,8 +3,9 @@
 //   2) CSV import: bring transactions in from a spreadsheet / bank export.
 //   3) Chart of accounts: add / rename / delete categories, grouped by section.
 //   4) Security & app: how the PIN + encryption are configured, plus Sign out.
+import Link from "next/link";
 import { format } from "date-fns";
-import { ShieldCheck, KeyRound, Lock } from "lucide-react";
+import { ShieldCheck, KeyRound, Lock, Users, CreditCard, ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { getBusinessContext } from "@/lib/session";
 import { PageHeader } from "@/components/ui";
@@ -91,6 +92,30 @@ export default async function SettingsPage() {
       <PageHeader title="Settings" subtitle="Connect your bank, import history, and shape your books" />
 
       <div className="flex flex-col gap-5">
+        {/* Workspace links */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Link href="/settings/team" className="card group flex items-center gap-3 p-4 transition hover:-translate-y-0.5 hover:shadow-md">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-500/10 text-brand-600 dark:text-brand-400">
+              <Users size={18} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">Team</div>
+              <div className="muted truncate text-xs">Invite people and manage roles</div>
+            </div>
+            <ChevronRight size={16} className="muted shrink-0 transition group-hover:translate-x-0.5" />
+          </Link>
+          <Link href="/settings/billing" className="card group flex items-center gap-3 p-4 transition hover:-translate-y-0.5 hover:shadow-md">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-500/10 text-brand-600 dark:text-brand-400">
+              <CreditCard size={18} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium">Billing</div>
+              <div className="muted truncate text-xs">Subscription and payment</div>
+            </div>
+            <ChevronRight size={16} className="muted shrink-0 transition group-hover:translate-x-0.5" />
+          </Link>
+        </div>
+
         <BankFeedCard connection={connectionInfo} />
         <CsvImportCard accounts={accountList} />
         <ChartOfAccountsCard categories={categoryList} />

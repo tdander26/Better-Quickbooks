@@ -12,6 +12,7 @@ import {
   BarChart3,
   Filter,
   Settings,
+  Users,
   Wallet,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -33,6 +34,7 @@ const NAV = [
   { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
   { href: "/reports", label: "Reports", icon: BarChart3 },
   { href: "/rules", label: "Rules", icon: Filter },
+  { href: "/settings/team", label: "Team", icon: Users },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -48,6 +50,12 @@ function isActive(pathname: string, href: string) {
 export function AppShell({ children, shell }: { children: ReactNode; shell: ShellData | null }) {
   const pathname = usePathname();
   if (isBareRoute(pathname) || !shell) return <>{children}</>;
+
+  // Highlight the single best (longest) matching nav entry, so /settings/team
+  // doesn't also light up /settings.
+  const activeHref = [...NAV]
+    .sort((a, b) => b.href.length - a.href.length)
+    .find((n) => isActive(pathname, n.href))?.href;
 
   return (
     <div className="min-h-dvh md:flex">
@@ -70,7 +78,7 @@ export function AppShell({ children, shell }: { children: ReactNode; shell: Shel
         </div>
         <nav className="flex flex-col gap-1">
           {NAV.map((item) => {
-            const active = isActive(pathname, item.href);
+            const active = item.href === activeHref;
             const Icon = item.icon;
             return (
               <Link
