@@ -3,6 +3,7 @@
 // the interactive list + editor over to _editor.tsx.
 import { prisma } from "@/lib/db";
 import { Wand2 } from "lucide-react";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader, Card } from "@/components/ui";
 import { RulesManager, type RuleRow, type RuleCategoryOption } from "./_editor";
 
@@ -10,12 +11,17 @@ import { RulesManager, type RuleRow, type RuleCategoryOption } from "./_editor";
 export const dynamic = "force-dynamic";
 
 export default async function RulesPage() {
+  const ctx = await getBusinessContext();
   const [rules, categories] = await Promise.all([
     prisma.rule.findMany({
+      where: { businessId: ctx.businessId },
       orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
       include: { category: true },
     }),
-    prisma.category.findMany({ orderBy: [{ section: "asc" }, { name: "asc" }] }),
+    prisma.category.findMany({
+      where: { businessId: ctx.businessId },
+      orderBy: [{ section: "asc" }, { name: "asc" }],
+    }),
   ]);
 
   // Serialize into plain, client-safe shapes.

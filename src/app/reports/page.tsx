@@ -20,6 +20,7 @@ import {
   type MonthlyByCategory,
 } from "@/lib/reports";
 import { formatMoney } from "@/lib/money";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader, Card, StatTile, Money, EmptyState } from "@/components/ui";
 import { ReportControls } from "./_controls";
 
@@ -82,6 +83,7 @@ export default async function ReportsPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
+  const ctx = await getBusinessContext();
   const sp = await searchParams;
   const tab: Tab =
     sp.tab === "balance" || sp.tab === "cashflow" || sp.tab === "monthly" ? sp.tab : "pl";
@@ -94,8 +96,8 @@ export default async function ReportsPage({
   const asOfStr = format(asOf, "yyyy-MM-dd");
 
   // Accounts power the filter dropdown and validate the ?account= param.
-  const accounts = await prisma.account.findMany({
-    where: { archived: false },
+  const accounts = await prisma.financialAccount.findMany({
+    where: { businessId: ctx.businessId, archived: false },
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     select: { id: true, name: true, institution: true },
   });
@@ -120,11 +122,11 @@ export default async function ReportsPage({
   // Only the active tab's data is fetched (short-circuits before the await).
   let content: ReactNode;
   if (tab === "balance") {
-    content = <BalanceReport data={await balanceSheetAsOf(asOf)} />;
+    content = <BalanceReport data={await balanceSheetAsOf(ctx.businessId, asOf)} />;
   } else if (tab === "cashflow") {
     content = (
       <CashFlowReport
-        data={await cashFlow(start, end, accountId)}
+        data={await cashFlow(ctx.businessId, start, end, accountId)}
         rangeLabel={rangeLabel}
         startStr={startStr}
         endStr={endStr}
@@ -132,11 +134,11 @@ export default async function ReportsPage({
       />
     );
   } else if (tab === "monthly") {
-    content = <MonthlyReport data={await monthlyByCategory(6)} />;
+    content = <MonthlyReport data={await monthlyByCategory(ctx.businessId, 6)} />;
   } else {
     const [data, prior] = await Promise.all([
-      profitAndLoss(start, end, accountId),
-      profitAndLoss(priorStart, priorEnd, accountId),
+      profitAndLoss(ctx.businessId, start, end, accountId),
+      profitAndLoss(ctx.businessId, priorStart, priorEnd, accountId),
     ]);
     content = (
       <PLReport

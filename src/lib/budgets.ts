@@ -19,9 +19,9 @@ export function monthRange(month: string): { start: Date; end: Date } {
 }
 
 /** All budgets for a given month, with their category joined. */
-export async function getBudgets(month: string) {
+export async function getBudgets(businessId: string, month: string) {
   return prisma.budget.findMany({
-    where: { month },
+    where: { businessId, month },
     include: { category: true },
     orderBy: { amountCents: "desc" },
   });
@@ -47,13 +47,13 @@ export interface BudgetVsActual {
  * category that has a budget OR recorded spend this month. Uncategorized spend
  * (no categoryId) can't be budgeted, so it's excluded from the per-category list.
  */
-export async function budgetVsActual(month: string): Promise<BudgetVsActual> {
+export async function budgetVsActual(businessId: string, month: string): Promise<BudgetVsActual> {
   const { start, end } = monthRange(month);
 
   const [categories, budgets, spending] = await Promise.all([
-    prisma.category.findMany({ where: { section: "expense" } }),
-    getBudgets(month),
-    spendingByCategory(start, end),
+    prisma.category.findMany({ where: { businessId, section: "expense" } }),
+    getBudgets(businessId, month),
+    spendingByCategory(businessId, start, end),
   ]);
 
   const catById = new Map(categories.map((c) => [c.id, c]));

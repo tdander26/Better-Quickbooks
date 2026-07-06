@@ -4,6 +4,7 @@
 // interactive register in _table.tsx.
 import { prisma } from "@/lib/db";
 import { UNCATEGORIZED } from "@/lib/types";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader } from "@/components/ui";
 import { buildBadgeContext } from "@/lib/badge-context";
 import { transactionBadges } from "@/lib/badges";
@@ -32,6 +33,7 @@ export default async function TransactionsPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
+  const ctx = await getBusinessContext();
   const sp = await searchParams;
 
   const q = (sp.q ?? "").trim();
@@ -87,7 +89,10 @@ export default async function TransactionsPage({
     });
   }
 
-  const where: Prisma.TransactionWhereInput = and.length ? { AND: and } : {};
+  const where: Prisma.TransactionWhereInput = {
+    businessId: ctx.businessId,
+    ...(and.length ? { AND: and } : {}),
+  };
 
   // --- Fetch the page + option lists ---------------------------------------
   const [total, txns, accounts, categories] = await Promise.all([
@@ -99,17 +104,21 @@ export default async function TransactionsPage({
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
     }),
-    prisma.account.findMany({
-      where: { archived: false },
+    prisma.financialAccount.findMany({
+      where: { businessId: ctx.businessId, archived: false },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     }),
-    prisma.category.findMany({ orderBy: [{ section: "asc" }, { name: "asc" }] }),
+    prisma.category.findMany({
+      where: { businessId: ctx.businessId },
+      orderBy: [{ section: "asc" }, { name: "asc" }],
+    }),
   ]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   // Smart-badge context (recurring payees, duplicates, transfer linkage, rules).
   const badgeCtx = await buildBadgeContext(
+    ctx.businessId,
     txns.map((t) => ({
       id: t.id,
       accountId: t.accountId,

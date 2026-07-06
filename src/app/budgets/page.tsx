@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight, Wallet } from "lucide-react";
 import { format, parse, addMonths, subMonths, isValid } from "date-fns";
 import { budgetVsActual, monthKey } from "@/lib/budgets";
 import { formatMoney } from "@/lib/money";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader, StatTile } from "@/components/ui";
 import { BudgetList } from "./_client";
 
@@ -30,6 +31,7 @@ export default async function BudgetsPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
+  const ctx = await getBusinessContext();
   const sp = await searchParams;
   const month = resolveMonth(sp.month);
   const monthDate = parse(month, "yyyy-MM", new Date());
@@ -38,7 +40,7 @@ export default async function BudgetsPage({
   const next = monthKey(addMonths(monthDate, 1));
   const monthLabel = format(monthDate, "MMMM yyyy");
 
-  const { lines, totalBudget, totalActual } = await budgetVsActual(month);
+  const { lines, totalBudget, totalActual } = await budgetVsActual(ctx.businessId, month);
   const remaining = totalBudget - totalActual;
 
   return (

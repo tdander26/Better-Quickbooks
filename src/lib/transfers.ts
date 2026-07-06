@@ -50,10 +50,14 @@ function pairUp(candidates: Candidate[]): [string, string][] {
  * a set of transaction ids (e.g. a bulk selection or one import batch). Returns
  * the number of pairs linked.
  */
-export async function linkTransfers(scope?: { transactionIds?: string[] }): Promise<{ linked: number }> {
+export async function linkTransfers(
+  businessId: string,
+  scope?: { transactionIds?: string[] },
+): Promise<{ linked: number }> {
   // Any transfer-SECTION category counts (e.g. "Transfer" AND "Credit Card Payment").
   const candidates = await prisma.transaction.findMany({
     where: {
+      businessId,
       transferId: null,
       splits: { some: { category: { is: { section: "transfer" } } } },
       ...(scope?.transactionIds ? { id: { in: scope.transactionIds } } : {}),
@@ -64,17 +68,17 @@ export async function linkTransfers(scope?: { transactionIds?: string[] }): Prom
   const pairs = pairUp(candidates);
   for (const [a, b] of pairs) {
     const tid = randomUUID();
-    await prisma.transaction.updateMany({ where: { id: { in: [a, b] } }, data: { transferId: tid } });
+    await prisma.transaction.updateMany({ where: { businessId, id: { in: [a, b] } }, data: { transferId: tid } });
   }
   return { linked: pairs.length };
 }
 
 /** The counterpart of a linked transfer, if any (for "jump to other side" UI). */
-export async function transferCounterpart(transactionId: string) {
-  const txn = await prisma.transaction.findUnique({ where: { id: transactionId } });
+export async function transferCounterpart(businessId: string, transactionId: string) {
+  const txn = await prisma.transaction.findFirst({ where: { id: transactionId, businessId } });
   if (!txn?.transferId) return null;
   return prisma.transaction.findFirst({
-    where: { transferId: txn.transferId, id: { not: transactionId } },
+    where: { businessId, transferId: txn.transferId, id: { not: transactionId } },
     include: { account: true },
   });
 }

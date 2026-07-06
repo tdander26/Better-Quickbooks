@@ -7,7 +7,7 @@
 // Dynamic segment `params` is a Promise in Next 15 and must be awaited.
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -17,11 +17,11 @@ function safeFilename(name: string): string {
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
-  const attachment = await prisma.attachment.findUnique({ where: { id } });
+  const attachment = await prisma.attachment.findFirst({ where: { id, businessId: ctx.businessId } });
   if (!attachment) return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
 
   const buffer = Buffer.from(attachment.dataBase64, "base64");
@@ -37,13 +37,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
-  const existing = await prisma.attachment.findUnique({ where: { id }, select: { id: true } });
-  if (!existing) return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
+  const deleted = await prisma.attachment.deleteMany({ where: { id, businessId: ctx.businessId } });
+  if (deleted.count === 0) return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
 
-  await prisma.attachment.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }

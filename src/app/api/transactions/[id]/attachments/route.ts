@@ -8,7 +8,7 @@
 // Dynamic segment `params` is a Promise in Next 15 and must be awaited.
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -19,12 +19,19 @@ function isAllowedMime(mime: string): boolean {
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
+  // Verify the parent transaction belongs to this business before listing.
+  const txn = await prisma.transaction.findFirst({
+    where: { id, businessId: ctx.businessId },
+    select: { id: true },
+  });
+  if (!txn) return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
+
   const attachments = await prisma.attachment.findMany({
-    where: { transactionId: id },
+    where: { transactionId: id, businessId: ctx.businessId },
     orderBy: { createdAt: "asc" },
     // Deliberately omit dataBase64 — the list stays lightweight.
     select: { id: true, filename: true, mimeType: true, sizeBytes: true, createdAt: true },
@@ -34,11 +41,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
-  const txn = await prisma.transaction.findUnique({ where: { id }, select: { id: true } });
+  const txn = await prisma.transaction.findFirst({
+    where: { id, businessId: ctx.businessId },
+    select: { id: true },
+  });
   if (!txn) return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
 
   const body = await req.json().catch(() => null);
@@ -78,7 +88,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   const attachment = await prisma.attachment.create({
-    data: { transactionId: id, filename, mimeType, sizeBytes, dataBase64 },
+    data: { transactionId: id, businessId: ctx.businessId, filename, mimeType, sizeBytes, dataBase64 },
     select: { id: true },
   });
 

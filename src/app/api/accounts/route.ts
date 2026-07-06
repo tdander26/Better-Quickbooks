@@ -2,7 +2,7 @@
 // classification is derived from type (bank -> asset, credit_card -> liability).
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { toCents } from "@/lib/money";
 import { ACCOUNT_TYPES, type AccountType } from "@/lib/types";
 
@@ -13,8 +13,8 @@ function classificationFor(type: AccountType): "asset" | "liability" {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext({ minRole: "admin" });
+  if (ctx instanceof NextResponse) return ctx;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -44,11 +44,15 @@ export async function POST(req: NextRequest) {
   }
 
   // Place new accounts at the end of the manual sort order.
-  const last = await prisma.account.findFirst({ orderBy: { sortOrder: "desc" } });
+  const last = await prisma.financialAccount.findFirst({
+    where: { businessId: ctx.businessId },
+    orderBy: { sortOrder: "desc" },
+  });
   const sortOrder = (last?.sortOrder ?? 0) + 1;
 
-  const account = await prisma.account.create({
+  const account = await prisma.financialAccount.create({
     data: {
+      businessId: ctx.businessId,
       name,
       institution,
       type,

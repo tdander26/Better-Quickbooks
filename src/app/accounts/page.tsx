@@ -6,13 +6,15 @@ import { Landmark, CreditCard, ChevronRight, Check, AlertTriangle } from "lucide
 import { accountBalances, type AccountBalance } from "@/lib/reports";
 import { formatMoney } from "@/lib/money";
 import { ACCOUNT_TYPE_LABELS, type AccountType } from "@/lib/types";
+import { getBusinessContext } from "@/lib/session";
 import { PageHeader, StatTile, Money, Badge, EmptyState } from "@/components/ui";
 import { AccountForm } from "./_form";
 
 export const dynamic = "force-dynamic";
 
 export default async function AccountsPage() {
-  const balances = await accountBalances();
+  const ctx = await getBusinessContext();
+  const balances = await accountBalances(ctx.businessId);
 
   let assetsCents = 0;
   let liabilitiesCents = 0;

@@ -6,7 +6,7 @@
 //   single ImportBatch(source: "csv") for auditability.
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { toCents } from "@/lib/money";
 import { categorize } from "@/lib/categorize";
 import { loadEnabledRules } from "@/lib/sync";
@@ -75,8 +75,8 @@ function findColumn(header: string[], names: string[]): number {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
   const accountId = String(body.accountId ?? "");
   if (!accountId) return NextResponse.json({ error: "Pick an account to import into." }, { status: 400 });
 
-  const account = await prisma.account.findUnique({ where: { id: accountId } });
+  const account = await prisma.financialAccount.findFirst({ where: { id: accountId, businessId: ctx.businessId } });
   if (!account) return NextResponse.json({ error: "That account doesn't exist." }, { status: 404 });
 
   const csv = String(body.csv ?? "");
@@ -111,16 +111,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const rules = await loadEnabledRules();
+  const rules = await loadEnabledRules(ctx.businessId);
   const [uncategorized, transfer] = await Promise.all([
-    prisma.category.findFirst({ where: { name: UNCATEGORIZED } }),
-    prisma.category.findFirst({ where: { name: TRANSFER_CATEGORY } }),
+    prisma.category.findFirst({ where: { businessId: ctx.businessId, name: UNCATEGORIZED } }),
+    prisma.category.findFirst({ where: { businessId: ctx.businessId, name: TRANSFER_CATEGORY } }),
   ]);
   const uncategorizedId = uncategorized?.id ?? null;
   const transferId = transfer?.id ?? null;
 
   const batch = await prisma.importBatch.create({
-    data: { source: "csv", note: `${account.name} · CSV upload` },
+    data: { businessId: ctx.businessId, source: "csv", note: `${account.name} · CSV upload` },
   });
 
   let imported = 0;
@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
 
     // Best-effort dedupe: same account + date + amount + description.
     const dup = await prisma.transaction.findFirst({
-      where: { accountId, postedAt, amountCents, description },
+      where: { businessId: ctx.businessId, accountId, postedAt, amountCents, description },
     });
     if (dup) {
       skipped++;
@@ -180,6 +180,7 @@ export async function POST(req: NextRequest) {
 
     await prisma.transaction.create({
       data: {
+        businessId: ctx.businessId,
         accountId,
         postedAt,
         amountCents,
@@ -187,16 +188,16 @@ export async function POST(req: NextRequest) {
         description,
         importBatchId: batch.id,
         categorizedBy: match ? "rule" : null,
-        splits: { create: [{ amountCents, categoryId, matchedRuleId: match?.ruleId ?? null }] },
+        splits: { create: [{ businessId: ctx.businessId, amountCents, categoryId, matchedRuleId: match?.ruleId ?? null }] },
       },
     });
     imported++;
   }
 
-  const { linked } = await linkTransfers();
+  const { linked } = await linkTransfers(ctx.businessId);
 
   await prisma.importBatch.update({
-    where: { id: batch.id },
+    where: { id: batch.id, businessId: ctx.businessId },
     data: { imported, skipped },
   });
 

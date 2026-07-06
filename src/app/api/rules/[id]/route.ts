@@ -3,7 +3,7 @@
 // referenced by transactions, so this is safe. `params` is a Promise in Next 15.
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { MATCH_FIELDS, OPERATORS, type MatchField, type Operator } from "@/lib/types";
 import type { Prisma } from "@prisma/client";
 
@@ -39,11 +39,11 @@ function validateValue(field: MatchField, op: Operator, value: string): string |
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext({ minRole: "admin" });
+  if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
-  const existing = await prisma.rule.findUnique({ where: { id } });
+  const existing = await prisma.rule.findFirst({ where: { id, businessId: ctx.businessId } });
   if (!existing) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
 
   const body = await req.json().catch(() => null);
@@ -104,7 +104,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!categoryId) {
       return NextResponse.json({ error: "Choose a category to assign." }, { status: 400 });
     }
-    const category = await prisma.category.findUnique({ where: { id: categoryId } });
+    const category = await prisma.category.findFirst({ where: { id: categoryId, businessId: ctx.businessId } });
     if (!category) {
       return NextResponse.json({ error: "That category no longer exists." }, { status: 400 });
     }
@@ -120,11 +120,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext({ minRole: "admin" });
+  if (ctx instanceof NextResponse) return ctx;
   const { id } = await params;
 
-  const existing = await prisma.rule.findUnique({ where: { id } });
+  const existing = await prisma.rule.findFirst({ where: { id, businessId: ctx.businessId } });
   if (!existing) return NextResponse.json({ error: "Rule not found" }, { status: 404 });
 
   await prisma.rule.delete({ where: { id } });

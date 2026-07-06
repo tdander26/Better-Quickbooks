@@ -14,6 +14,7 @@ import { notFound } from "next/navigation";
 import { format } from "date-fns";
 import { CheckCheck, Landmark, CreditCard, ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { getBusinessContext } from "@/lib/session";
 import { ACCOUNT_TYPE_LABELS, type AccountType } from "@/lib/types";
 import { PageHeader, Card, Money, Badge, EmptyState } from "@/components/ui";
 import { ReconcileWorkspace, type ReconcileTxn } from "./_client";
@@ -26,13 +27,14 @@ export default async function ReconcilePage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
+  const ctx = await getBusinessContext();
   const sp = await searchParams;
   const accountId = (sp.account ?? "").trim();
 
   // ---------------------------------------------------------------- Picker ---
   if (!accountId) {
-    const accounts = await prisma.account.findMany({
-      where: { archived: false },
+    const accounts = await prisma.financialAccount.findMany({
+      where: { businessId: ctx.businessId, archived: false },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     });
 
@@ -40,11 +42,11 @@ export default async function ReconcilePage({
       accounts.map(async (a) => {
         const [agg, uncleared] = await Promise.all([
           prisma.transaction.aggregate({
-            where: { accountId: a.id },
+            where: { accountId: a.id, businessId: ctx.businessId },
             _sum: { amountCents: true },
           }),
           prisma.transaction.count({
-            where: { accountId: a.id, clearedStatus: "uncleared" },
+            where: { accountId: a.id, businessId: ctx.businessId, clearedStatus: "uncleared" },
           }),
         ]);
         return {
@@ -127,16 +129,18 @@ export default async function ReconcilePage({
   }
 
   // ------------------------------------------------------------ Workspace ---
-  const account = await prisma.account.findUnique({ where: { id: accountId } });
+  const account = await prisma.financialAccount.findFirst({
+    where: { id: accountId, businessId: ctx.businessId },
+  });
   if (!account) notFound();
 
   const [txns, lastStatement] = await Promise.all([
     prisma.transaction.findMany({
-      where: { accountId },
+      where: { accountId, businessId: ctx.businessId },
       orderBy: { postedAt: "asc" },
     }),
     prisma.statement.findFirst({
-      where: { accountId },
+      where: { accountId, businessId: ctx.businessId },
       orderBy: { reconciledAt: "desc" },
     }),
   ]);

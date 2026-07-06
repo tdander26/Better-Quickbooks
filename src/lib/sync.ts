@@ -23,8 +23,8 @@ export interface ImportSummary {
   errors: string[];
 }
 
-export async function loadEnabledRules(): Promise<RuleLike[]> {
-  const rules = await prisma.rule.findMany({ where: { enabled: true } });
+export async function loadEnabledRules(businessId: string): Promise<RuleLike[]> {
+  const rules = await prisma.rule.findMany({ where: { businessId, enabled: true } });
   return rules.map((r) => ({
     id: r.id,
     enabled: r.enabled,
@@ -37,33 +37,34 @@ export async function loadEnabledRules(): Promise<RuleLike[]> {
   }));
 }
 
-async function categoryIdByName(name: string): Promise<string | null> {
-  const c = await prisma.category.findFirst({ where: { name } });
+async function categoryIdByName(businessId: string, name: string): Promise<string | null> {
+  const c = await prisma.category.findFirst({ where: { businessId, name } });
   return c?.id ?? null;
 }
 
-/** Bump matchCount/lastMatchedAt for each rule that fired. */
-async function recordRuleHits(hits: Map<string, number>): Promise<void> {
+/** Bump matchCount/lastMatchedAt for each rule that fired (scoped to a business). */
+async function recordRuleHits(businessId: string, hits: Map<string, number>): Promise<void> {
   const now = new Date();
   for (const [ruleId, count] of hits) {
-    await prisma.rule.update({
-      where: { id: ruleId },
+    await prisma.rule.updateMany({
+      where: { id: ruleId, businessId },
       data: { matchCount: { increment: count }, lastMatchedAt: now },
     });
   }
 }
 
-/** Import normalized accounts + their transactions. */
+/** Import normalized accounts + their transactions (scoped to one business). */
 export async function importNormalizedAccounts(
   accounts: NormAccount[],
-  opts: { source: string; connectionId?: string; providerErrors?: string[] }
+  opts: { businessId: string; source: string; connectionId?: string; providerErrors?: string[] }
 ): Promise<ImportSummary> {
-  const rules = await loadEnabledRules();
-  const uncategorizedId = await categoryIdByName(UNCATEGORIZED);
-  const transferId = await categoryIdByName(TRANSFER_CATEGORY);
+  const { businessId } = opts;
+  const rules = await loadEnabledRules(businessId);
+  const uncategorizedId = await categoryIdByName(businessId, UNCATEGORIZED);
+  const transferId = await categoryIdByName(businessId, TRANSFER_CATEGORY);
 
   const batch = await prisma.importBatch.create({
-    data: { source: opts.source, note: `${accounts.length} account(s)` },
+    data: { businessId, source: opts.source, note: `${accounts.length} account(s)` },
   });
 
   let imported = 0;
@@ -71,13 +72,18 @@ export async function importNormalizedAccounts(
   const ruleHits = new Map<string, number>();
 
   for (const acct of accounts) {
+    // Upsert the account by its provider id (or create a fresh one), scoped to
+    // this business.
     let dbAccount = acct.providerAccountId
-      ? await prisma.account.findUnique({ where: { simplefinAccountId: acct.providerAccountId } })
+      ? await prisma.financialAccount.findFirst({
+          where: { businessId, simplefinAccountId: acct.providerAccountId },
+        })
       : null;
 
     if (!dbAccount) {
-      dbAccount = await prisma.account.create({
+      dbAccount = await prisma.financialAccount.create({
         data: {
+          businessId,
           name: acct.name,
           institution: acct.institution,
           type: acct.type,
@@ -90,7 +96,7 @@ export async function importNormalizedAccounts(
         },
       });
     } else {
-      await prisma.account.update({
+      await prisma.financialAccount.update({
         where: { id: dbAccount.id },
         data: {
           reportedBalanceCents: acct.balanceCents,
@@ -101,9 +107,10 @@ export async function importNormalizedAccounts(
     }
 
     for (const txn of acct.transactions) {
+      // Dedupe: skip transactions we've already imported (per business).
       if (txn.providerTxnId) {
-        const existing = await prisma.transaction.findUnique({
-          where: { providerTxnId: txn.providerTxnId },
+        const existing = await prisma.transaction.findFirst({
+          where: { businessId, providerTxnId: txn.providerTxnId },
         });
         if (existing) {
           skipped++;
@@ -128,6 +135,7 @@ export async function importNormalizedAccounts(
 
       await prisma.transaction.create({
         data: {
+          businessId,
           accountId: dbAccount.id,
           postedAt: txn.postedAt,
           amountCents: txn.amountCents,
@@ -140,7 +148,12 @@ export async function importNormalizedAccounts(
           categorizedBy: match ? "rule" : null,
           splits: {
             create: [
-              { amountCents: txn.amountCents, categoryId: splitCategoryId, matchedRuleId: match?.ruleId ?? null },
+              {
+                businessId,
+                amountCents: txn.amountCents,
+                categoryId: splitCategoryId,
+                matchedRuleId: match?.ruleId ?? null,
+              },
             ],
           },
         },
@@ -149,8 +162,8 @@ export async function importNormalizedAccounts(
     }
   }
 
-  await recordRuleHits(ruleHits);
-  const { linked } = await linkTransfers();
+  await recordRuleHits(businessId, ruleHits);
+  const { linked } = await linkTransfers(businessId);
 
   await prisma.importBatch.update({
     where: { id: batch.id },
@@ -173,13 +186,14 @@ export async function importNormalizedAccounts(
  * user-reviewed. Never overwrites a split the user confirmed. Persists
  * provenance and refreshes rule stats + transfer links.
  */
-export async function reapplyRules(): Promise<{ updated: number; transfersLinked: number }> {
-  const rules = await loadEnabledRules();
-  const uncategorizedId = await categoryIdByName(UNCATEGORIZED);
-  const transferId = await categoryIdByName(TRANSFER_CATEGORY);
+export async function reapplyRules(businessId: string): Promise<{ updated: number; transfersLinked: number }> {
+  const rules = await loadEnabledRules(businessId);
+  const uncategorizedId = await categoryIdByName(businessId, UNCATEGORIZED);
+  const transferId = await categoryIdByName(businessId, TRANSFER_CATEGORY);
 
   const candidates = await prisma.transaction.findMany({
     where: {
+      businessId,
       reviewed: false,
       OR: [
         { splits: { some: { OR: [{ categoryId: null }, { categoryId: uncategorizedId }] } } },
@@ -214,7 +228,7 @@ export async function reapplyRules(): Promise<{ updated: number; transfersLinked
     updated++;
   }
 
-  await recordRuleHits(ruleHits);
-  const { linked } = await linkTransfers();
+  await recordRuleHits(businessId, ruleHits);
+  const { linked } = await linkTransfers(businessId);
   return { updated, transfersLinked: linked };
 }

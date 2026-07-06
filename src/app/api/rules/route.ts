@@ -4,7 +4,7 @@
 // These rules feed the categorize() engine used on import and on "Re-apply".
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAuth } from "@/lib/session";
+import { requireBusinessContext } from "@/lib/session";
 import { MATCH_FIELDS, OPERATORS, type MatchField, type Operator } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -41,10 +41,11 @@ function validateValue(field: MatchField, op: Operator, value: string): string |
 }
 
 export async function GET() {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext();
+  if (ctx instanceof NextResponse) return ctx;
 
   const rules = await prisma.rule.findMany({
+    where: { businessId: ctx.businessId },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
     include: { category: true },
   });
@@ -52,8 +53,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await requireAuth();
-  if (denied) return denied;
+  const ctx = await requireBusinessContext({ minRole: "admin" });
+  if (ctx instanceof NextResponse) return ctx;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
 
   const categoryId = String(body.categoryId ?? "");
   if (!categoryId) return NextResponse.json({ error: "Choose a category to assign." }, { status: 400 });
-  const category = await prisma.category.findUnique({ where: { id: categoryId } });
+  const category = await prisma.category.findFirst({ where: { id: categoryId, businessId: ctx.businessId } });
   if (!category) return NextResponse.json({ error: "That category no longer exists." }, { status: 400 });
 
   const priority = normalizePriority(body.priority);
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
   const enabled = body.enabled === undefined ? true : Boolean(body.enabled);
 
   const rule = await prisma.rule.create({
-    data: { name, priority, enabled, matchField, operator, value, categoryId, markTransfer },
+    data: { businessId: ctx.businessId, name, priority, enabled, matchField, operator, value, categoryId, markTransfer },
     include: { category: true },
   });
 
