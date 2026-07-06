@@ -32,8 +32,10 @@ turso db tokens create ledger              # -> TURSO_AUTH_TOKEN
 
 ## 2. Create the tables + seed demo data
 ```bash
-# Generate the schema SQL from prisma/schema.prisma and load it into Turso:
-npm run db:sql > schema.sql
+# Generate the schema SQL from prisma/schema.prisma and load it into Turso.
+# Call prisma directly (NOT `npm run db:sql`) — npm prepends banner lines to
+# stdout that Turso rejects as invalid SQL.
+npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > schema.sql
 turso db shell ledger < schema.sql
 
 # (optional) seed demo data straight into Turso:
@@ -88,7 +90,7 @@ So local development is unchanged; nothing here affects the old Netlify setup.
 ## Schema changes later
 `prisma/schema.prisma` is the source of truth. After editing models:
 ```bash
-npm run db:sql > schema.sql        # full CREATE for a fresh DB
+npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > schema.sql  # fresh DB
 # for an existing DB, diff against it and apply just the delta, e.g.:
 npx prisma migrate diff \
   --from-url "libsql://...?authToken=..." \
