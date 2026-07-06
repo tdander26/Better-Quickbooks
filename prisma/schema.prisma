@@ -11,6 +11,10 @@
 
 generator client {
   provider = "prisma-client-js"
+  // driverAdapters lets us hand Prisma a libSQL/Turso connection at runtime
+  // (see src/lib/db.ts) for Cloudflare Workers hosting. Local dev + the CLI
+  // still use the plain SQLite `file:` datasource below.
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
