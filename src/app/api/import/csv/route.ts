@@ -8,7 +8,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireBusinessContext } from "@/lib/session";
 import { toCents } from "@/lib/money";
-import { categorize, type RuleLike } from "@/lib/categorize";
+import { categorize } from "@/lib/categorize";
+import { loadEnabledRules } from "@/lib/sync";
+import { linkTransfers } from "@/lib/transfers";
 import { UNCATEGORIZED, TRANSFER_CATEGORY } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -72,20 +74,6 @@ function findColumn(header: string[], names: string[]): number {
   return -1;
 }
 
-async function loadRules(businessId: string): Promise<RuleLike[]> {
-  const rules = await prisma.rule.findMany({ where: { businessId, enabled: true } });
-  return rules.map((r) => ({
-    id: r.id,
-    enabled: r.enabled,
-    priority: r.priority,
-    matchField: r.matchField,
-    operator: r.operator,
-    value: r.value,
-    categoryId: r.categoryId,
-    markTransfer: r.markTransfer,
-  }));
-}
-
 export async function POST(req: NextRequest) {
   const ctx = await requireBusinessContext();
   if (ctx instanceof NextResponse) return ctx;
@@ -123,7 +111,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const rules = await loadRules(ctx.businessId);
+  const rules = await loadEnabledRules(ctx.businessId);
   const [uncategorized, transfer] = await Promise.all([
     prisma.category.findFirst({ where: { businessId: ctx.businessId, name: UNCATEGORIZED } }),
     prisma.category.findFirst({ where: { businessId: ctx.businessId, name: TRANSFER_CATEGORY } }),
@@ -199,16 +187,19 @@ export async function POST(req: NextRequest) {
         payee: payee || description,
         description,
         importBatchId: batch.id,
-        splits: { create: [{ businessId: ctx.businessId, amountCents, categoryId }] },
+        categorizedBy: match ? "rule" : null,
+        splits: { create: [{ businessId: ctx.businessId, amountCents, categoryId, matchedRuleId: match?.ruleId ?? null }] },
       },
     });
     imported++;
   }
+
+  const { linked } = await linkTransfers(ctx.businessId);
 
   await prisma.importBatch.update({
     where: { id: batch.id, businessId: ctx.businessId },
     data: { imported, skipped },
   });
 
-  return NextResponse.json({ ok: true, imported, skipped, errors });
+  return NextResponse.json({ ok: true, imported, skipped, transfersLinked: linked, errors });
 }

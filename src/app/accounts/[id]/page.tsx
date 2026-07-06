@@ -4,7 +4,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format } from "date-fns";
-import { ChevronLeft, Landmark, CreditCard } from "lucide-react";
+import { ChevronLeft, Landmark, CreditCard, CheckCircle2 } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { formatMoney } from "@/lib/money";
 import { ACCOUNT_TYPE_LABELS, UNCATEGORIZED, type AccountType } from "@/lib/types";
@@ -61,18 +61,24 @@ export default async function AccountPage({
         title={account.name}
         subtitle={`${account.institution} · ${typeLabel}`}
         actions={
-          <AccountForm
-            mode="edit"
-            variant="ghost"
-            account={{
-              id: account.id,
-              name: account.name,
-              institution: account.institution,
-              type: account.type as AccountType,
-              openingBalanceCents: account.openingBalanceCents,
-              openingDate: account.openingDate.toISOString(),
-            }}
-          />
+          <>
+            <Link href={`/reconcile?account=${account.id}`} className="btn-ghost">
+              <CheckCircle2 size={16} />
+              Reconcile
+            </Link>
+            <AccountForm
+              mode="edit"
+              variant="ghost"
+              account={{
+                id: account.id,
+                name: account.name,
+                institution: account.institution,
+                type: account.type as AccountType,
+                openingBalanceCents: account.openingBalanceCents,
+                openingDate: account.openingDate.toISOString(),
+              }}
+            />
+          </>
         }
       />
 

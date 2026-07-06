@@ -1,20 +1,19 @@
--- Multi-tenant migration (Milestones A/B/C).
+-- Multi-tenant migration (Milestones A/B/C), applied AFTER 0001_init,
+-- 0002_provenance_reconcile, and 0003_budgets_attachments_statements.
 --
--- Converts the single-tenant schema to multi-tenant: adds Auth.js tables
--- (User/auth_accounts/auth_sessions/auth_verification_tokens), tenancy tables
--- (Business/Membership/Invite), and a businessId foreign key on every financial
--- table. The financial "Account" table keeps its physical name (the Prisma model
--- was renamed to FinancialAccount with @@map("Account")); the NextAuth account
--- table is the separate "auth_accounts".
+-- Adds Auth.js tables (User/auth_accounts/auth_sessions/auth_verification_tokens),
+-- tenancy tables (Business/Membership/Invite), and a businessId foreign key on
+-- every financial table (10 of them, including Attachment/Budget/Statement). The
+-- financial "Account" table keeps its physical name (Prisma model renamed to
+-- FinancialAccount via @@map); the NextAuth account table is "auth_accounts".
 --
--- ORDER MATTERS: new tables -> add nullable businessId -> BACKFILL existing rows
--- into one default Business -> set NOT NULL + swap uniques + add indexes/FKs. The
--- backfill only runs when financial data already exists (existing single-tenant
--- install); on an empty database it is a no-op.
+-- ORDER: create new tables -> add nullable businessId -> BACKFILL existing rows
+-- into one default Business (only when financial data already exists) -> set
+-- NOT NULL -> swap single-column uniques for per-business composites -> indexes/FKs.
 --
 -- ⚠️  BACKFILL LOGIN: existing data is assigned to a default owner
 --     (doc@drtoddanderson.com) with a TEMPORARY password "ChangeMe-BetterBooks-2026".
---     Sign in and change it immediately (or reset it) after deploying.
+--     Sign in and change it immediately after deploying.
 
 -- ============================================================================
 -- 1) New tables
@@ -123,7 +122,7 @@ ALTER TABLE "Invite" ADD CONSTRAINT "Invite_businessId_fkey" FOREIGN KEY ("busin
 ALTER TABLE "Invite" ADD CONSTRAINT "Invite_invitedById_fkey" FOREIGN KEY ("invitedById") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- ============================================================================
--- 2) Add businessId as NULLABLE to the financial tables (so existing rows pass)
+-- 2) Add businessId as NULLABLE to the 10 financial tables
 -- ============================================================================
 ALTER TABLE "Account" ADD COLUMN "businessId" TEXT;
 ALTER TABLE "Transaction" ADD COLUMN "businessId" TEXT;
@@ -132,6 +131,9 @@ ALTER TABLE "Category" ADD COLUMN "businessId" TEXT;
 ALTER TABLE "Rule" ADD COLUMN "businessId" TEXT;
 ALTER TABLE "FeedConnection" ADD COLUMN "businessId" TEXT;
 ALTER TABLE "ImportBatch" ADD COLUMN "businessId" TEXT;
+ALTER TABLE "Attachment" ADD COLUMN "businessId" TEXT;
+ALTER TABLE "Budget" ADD COLUMN "businessId" TEXT;
+ALTER TABLE "Statement" ADD COLUMN "businessId" TEXT;
 
 -- ============================================================================
 -- 3) Backfill existing (single-tenant) data into one default Business.
@@ -162,10 +164,12 @@ UPDATE "Category"       SET "businessId" = 'seed_business_default' WHERE "busine
 UPDATE "Rule"           SET "businessId" = 'seed_business_default' WHERE "businessId" IS NULL;
 UPDATE "FeedConnection" SET "businessId" = 'seed_business_default' WHERE "businessId" IS NULL;
 UPDATE "ImportBatch"    SET "businessId" = 'seed_business_default' WHERE "businessId" IS NULL;
+UPDATE "Attachment"     SET "businessId" = 'seed_business_default' WHERE "businessId" IS NULL;
+UPDATE "Budget"         SET "businessId" = 'seed_business_default' WHERE "businessId" IS NULL;
+UPDATE "Statement"      SET "businessId" = 'seed_business_default' WHERE "businessId" IS NULL;
 
 -- ============================================================================
--- 4) Enforce NOT NULL, swap single-column uniques for per-business composites,
---    add businessId indexes + foreign keys.
+-- 4) Enforce NOT NULL
 -- ============================================================================
 ALTER TABLE "Account"        ALTER COLUMN "businessId" SET NOT NULL;
 ALTER TABLE "Transaction"    ALTER COLUMN "businessId" SET NOT NULL;
@@ -174,10 +178,17 @@ ALTER TABLE "Category"       ALTER COLUMN "businessId" SET NOT NULL;
 ALTER TABLE "Rule"           ALTER COLUMN "businessId" SET NOT NULL;
 ALTER TABLE "FeedConnection" ALTER COLUMN "businessId" SET NOT NULL;
 ALTER TABLE "ImportBatch"    ALTER COLUMN "businessId" SET NOT NULL;
+ALTER TABLE "Attachment"     ALTER COLUMN "businessId" SET NOT NULL;
+ALTER TABLE "Budget"         ALTER COLUMN "businessId" SET NOT NULL;
+ALTER TABLE "Statement"      ALTER COLUMN "businessId" SET NOT NULL;
 
+-- ============================================================================
+-- 5) Swap single-column uniques for per-business composites; add indexes
+-- ============================================================================
 DROP INDEX "Account_simplefinAccountId_key";
 DROP INDEX "Transaction_providerTxnId_key";
 DROP INDEX "Category_name_parentId_key";
+DROP INDEX "Budget_categoryId_month_key";
 
 CREATE INDEX "Account_businessId_idx" ON "Account"("businessId");
 CREATE UNIQUE INDEX "Account_businessId_simplefinAccountId_key" ON "Account"("businessId", "simplefinAccountId");
@@ -189,7 +200,14 @@ CREATE UNIQUE INDEX "Category_businessId_name_parentId_key" ON "Category"("busin
 CREATE INDEX "Rule_businessId_idx" ON "Rule"("businessId");
 CREATE INDEX "FeedConnection_businessId_idx" ON "FeedConnection"("businessId");
 CREATE INDEX "ImportBatch_businessId_idx" ON "ImportBatch"("businessId");
+CREATE INDEX "Attachment_businessId_idx" ON "Attachment"("businessId");
+CREATE INDEX "Budget_businessId_idx" ON "Budget"("businessId");
+CREATE UNIQUE INDEX "Budget_businessId_categoryId_month_key" ON "Budget"("businessId", "categoryId", "month");
+CREATE INDEX "Statement_businessId_idx" ON "Statement"("businessId");
 
+-- ============================================================================
+-- 6) Foreign keys for the businessId columns
+-- ============================================================================
 ALTER TABLE "Account" ADD CONSTRAINT "Account_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "Transaction" ADD CONSTRAINT "Transaction_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "Split" ADD CONSTRAINT "Split_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -197,3 +215,6 @@ ALTER TABLE "Category" ADD CONSTRAINT "Category_businessId_fkey" FOREIGN KEY ("b
 ALTER TABLE "Rule" ADD CONSTRAINT "Rule_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "FeedConnection" ADD CONSTRAINT "FeedConnection_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "ImportBatch" ADD CONSTRAINT "ImportBatch_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Attachment" ADD CONSTRAINT "Attachment_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Budget" ADD CONSTRAINT "Budget_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Statement" ADD CONSTRAINT "Statement_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE;

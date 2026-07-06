@@ -2,22 +2,54 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================================
+   Ledger — Categorize Cockpit design tokens (from the design handoff).
+   Single warm light theme; final colors, radii, and shadows per spec.
+   ========================================================================== */
 :root {
-  --bg: #f6f7f9;
-  --card: #ffffff;
-  --border: #e7e9ee;
-  --text: #1a1d23;
-  --muted: #6b7280;
-}
+  /* Surfaces */
+  --bg: #faf9f6; /* page background */
+  --card: #fdfcfa; /* card surface */
+  --warm: #f4f1ea; /* right-pane / warm surface */
+  --hover: #f1ede5; /* hover */
+  --hover-soft: #f6f3ec;
+  --border: #e9e5de; /* pane divider */
+  --hairline: #efebe3; /* faint row divider */
+  --scroll-thumb: #dad5cb;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1115;
-    --card: #171a21;
-    --border: #262b35;
-    --text: #e9ebef;
-    --muted: #9aa2b1;
-  }
+  /* Ink + text */
+  --text: #1c1a17; /* ink */
+  --muted: #6e695d;
+  --faint: #8d8778;
+  --dim: #b0aa9b;
+  --dim2: #c9c2b3;
+
+  /* Brand accent (green) — themeable */
+  --accent: #2a6b4f;
+  --accent-tint-bg: #e4eee8;
+  --accent-tint-border: #bfd5c9;
+  --accent-tint-text: #21543e;
+
+  /* Amber (medium confidence) */
+  --amber: #8a6d1f;
+  --amber-bg: #f5eeda;
+  --amber-border: #e2d5a8;
+
+  /* Red (negative / overdue) */
+  --red: #b4543e;
+  --red-bg: #f5e6e1;
+
+  /* Dark surfaces (footer, tax card) */
+  --ink-surface: #1c1a17;
+  --on-dark: #f4f1ea;
+  --on-dark-muted: #a39d8e;
+  --dark-divider: #55503f;
+
+  /* Type — next/font sets --font-sans-next / --font-serif-next on <html>
+     (self-hosted, see src/app/layout.tsx); we map them here with literal
+     fallbacks so text still renders if the font ever fails to load. */
+  --font-sans: var(--font-sans-next), "Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: var(--font-serif-next), "Instrument Serif", Georgia, "Times New Roman", serif;
 }
 
 html,
@@ -29,40 +61,66 @@ body {
 }
 
 body {
-  font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+
+/* Thin warm scrollbars, per spec (8px, thumb #DAD5CB, transparent track). */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.serif {
+  font-family: var(--font-serif);
+  letter-spacing: -0.5px;
 }
 
 @layer components {
   .card {
-    @apply rounded-2xl border shadow-sm;
+    @apply rounded-xl border;
     background: var(--card);
     border-color: var(--border);
+    box-shadow: 0 1px 2px rgba(28, 26, 23, 0.04);
   }
   .muted {
     color: var(--muted);
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-primary {
-    @apply btn text-white;
-    background: linear-gradient(180deg, #18b463, #0c924f);
+    @apply btn font-semibold;
+    background: var(--accent);
+    color: #faf9f6;
+  }
+  .btn-primary:hover {
+    filter: brightness(1.1);
   }
   .btn-ghost {
     @apply btn border;
-    border-color: var(--border);
+    border-color: var(--dim2);
     background: transparent;
+    color: var(--text);
   }
   .btn-ghost:hover {
-    background: color-mix(in srgb, var(--text) 5%, transparent);
+    background: var(--hover);
   }
   .input {
-    @apply w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2;
+    @apply w-full rounded-lg border px-3 py-2 text-sm outline-none;
     background: var(--card);
-    border-color: var(--border);
+    border-color: var(--dim2);
   }
   .input:focus {
-    --tw-ring-color: #3fce7f66;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(42, 107, 79, 0.15);
   }
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium;
@@ -76,4 +134,122 @@ body {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* ============================================================================
+   Categorize Cockpit — responsive layout.
+   Desktop (>= 900px): fixed three-pane grid, each pane scrolls independently.
+   Mobile (< 900px): single column that flows with the page; the left rail is
+   replaced by a bottom tab bar, and the right rail stacks under the workspace.
+   Structural properties live here (not inline) so the breakpoint can override.
+   ========================================================================== */
+.ck-root {
+  display: grid;
+  grid-template-columns: 236px 1fr 320px;
+  height: 100vh;
+  min-height: 720px;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+.ck-left {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  padding: 26px 18px 18px;
+  overflow-y: auto;
+}
+.ck-center {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+.ck-header {
+  padding: 24px 30px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.ck-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 30px 24px;
+}
+.ck-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 30px;
+  background: var(--ink-surface);
+  color: var(--on-dark-muted);
+  font-size: 12px;
+  flex: none;
+  flex-wrap: wrap;
+}
+.ck-right {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--warm);
+  overflow-y: auto;
+}
+.ck-gridwrap {
+  overflow-x: auto;
+}
+.ck-mobilebar,
+.ck-mobilenav {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .ck-root {
+    grid-template-columns: 1fr;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+    padding-bottom: 64px; /* clear the fixed bottom tab bar */
+  }
+  .ck-left {
+    display: none; /* nav moves to the bottom tab bar */
+  }
+  .ck-center {
+    overflow: visible;
+  }
+  .ck-header {
+    padding: 18px 18px 14px;
+  }
+  .ck-body {
+    overflow: visible;
+    padding: 16px 16px 20px;
+  }
+  .ck-footer {
+    padding: 11px 16px;
+  }
+  .ck-right {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    overflow: visible;
+  }
+  /* The dense one-offs grid keeps its column proportions and scrolls sideways
+     inside its card rather than breaking the page layout. */
+  .ck-grid {
+    min-width: 560px;
+  }
+  .ck-mobilebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 16px 6px;
+  }
+  .ck-mobilenav {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 40;
+    border-top: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 94%, transparent);
+    backdrop-filter: blur(8px);
+  }
 }

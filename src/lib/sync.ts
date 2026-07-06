@@ -1,7 +1,9 @@
 // Maps normalized feed data (from any FeedProvider, or CSV) into our database:
 //  - upserts accounts by their provider id
 //  - dedupes transactions by providerTxnId
-//  - runs new transactions through the rules engine (falls back to Uncategorized)
+//  - runs new transactions through the rules engine, PERSISTING provenance
+//    (which rule matched + categorizedBy) so the UI can show smart badges
+//  - auto-links internal transfers
 //  - records an ImportBatch for auditability
 //
 // Used by the SimpleFIN "Refresh" route and the CSV importer.
@@ -9,6 +11,7 @@
 import { prisma } from "@/lib/db";
 import { categorize, type RuleLike } from "@/lib/categorize";
 import { UNCATEGORIZED, TRANSFER_CATEGORY } from "@/lib/types";
+import { linkTransfers } from "@/lib/transfers";
 import type { NormAccount } from "@/lib/feeds/types";
 
 export interface ImportSummary {
@@ -16,10 +19,11 @@ export interface ImportSummary {
   imported: number;
   skipped: number;
   accountsSeen: number;
+  transfersLinked: number;
   errors: string[];
 }
 
-async function getRules(businessId: string): Promise<RuleLike[]> {
+export async function loadEnabledRules(businessId: string): Promise<RuleLike[]> {
   const rules = await prisma.rule.findMany({ where: { businessId, enabled: true } });
   return rules.map((r) => ({
     id: r.id,
@@ -38,13 +42,24 @@ async function categoryIdByName(businessId: string, name: string): Promise<strin
   return c?.id ?? null;
 }
 
+/** Bump matchCount/lastMatchedAt for each rule that fired (scoped to a business). */
+async function recordRuleHits(businessId: string, hits: Map<string, number>): Promise<void> {
+  const now = new Date();
+  for (const [ruleId, count] of hits) {
+    await prisma.rule.updateMany({
+      where: { id: ruleId, businessId },
+      data: { matchCount: { increment: count }, lastMatchedAt: now },
+    });
+  }
+}
+
 /** Import normalized accounts + their transactions (scoped to one business). */
 export async function importNormalizedAccounts(
   accounts: NormAccount[],
   opts: { businessId: string; source: string; connectionId?: string; providerErrors?: string[] }
 ): Promise<ImportSummary> {
   const { businessId } = opts;
-  const rules = await getRules(businessId);
+  const rules = await loadEnabledRules(businessId);
   const uncategorizedId = await categoryIdByName(businessId, UNCATEGORIZED);
   const transferId = await categoryIdByName(businessId, TRANSFER_CATEGORY);
 
@@ -54,6 +69,7 @@ export async function importNormalizedAccounts(
 
   let imported = 0;
   let skipped = 0;
+  const ruleHits = new Map<string, number>();
 
   for (const acct of accounts) {
     // Upsert the account by its provider id (or create a fresh one), scoped to
@@ -115,6 +131,7 @@ export async function importNormalizedAccounts(
           ? transferId ?? match.categoryId
           : match.categoryId
         : uncategorizedId;
+      if (match) ruleHits.set(match.ruleId, (ruleHits.get(match.ruleId) ?? 0) + 1);
 
       await prisma.transaction.create({
         data: {
@@ -128,14 +145,25 @@ export async function importNormalizedAccounts(
           pending: txn.pending,
           providerTxnId: txn.providerTxnId || null,
           importBatchId: batch.id,
+          categorizedBy: match ? "rule" : null,
           splits: {
-            create: [{ businessId, amountCents: txn.amountCents, categoryId: splitCategoryId }],
+            create: [
+              {
+                businessId,
+                amountCents: txn.amountCents,
+                categoryId: splitCategoryId,
+                matchedRuleId: match?.ruleId ?? null,
+              },
+            ],
           },
         },
       });
       imported++;
     }
   }
+
+  await recordRuleHits(businessId, ruleHits);
+  const { linked } = await linkTransfers(businessId);
 
   await prisma.importBatch.update({
     where: { id: batch.id },
@@ -147,25 +175,37 @@ export async function importNormalizedAccounts(
     imported,
     skipped,
     accountsSeen: accounts.length,
+    transfersLinked: linked,
     errors: opts.providerErrors ?? [],
   };
 }
 
 /**
- * Re-run rules across transactions that are still Uncategorized and not yet
- * user-reviewed. Never overwrites a split the user has confirmed.
+ * Re-run rules across transactions that are still Uncategorized OR were
+ * previously auto-assigned by a rule (categorizedBy="rule") and not yet
+ * user-reviewed. Never overwrites a split the user confirmed. Persists
+ * provenance and refreshes rule stats + transfer links.
  */
-export async function reapplyRules(businessId: string): Promise<{ updated: number }> {
-  const rules = await getRules(businessId);
+export async function reapplyRules(businessId: string): Promise<{ updated: number; transfersLinked: number }> {
+  const rules = await loadEnabledRules(businessId);
   const uncategorizedId = await categoryIdByName(businessId, UNCATEGORIZED);
   const transferId = await categoryIdByName(businessId, TRANSFER_CATEGORY);
 
   const candidates = await prisma.transaction.findMany({
-    where: { businessId, reviewed: false, splits: { some: { OR: [{ categoryId: null }, { categoryId: uncategorizedId }] } } },
+    where: {
+      businessId,
+      reviewed: false,
+      OR: [
+        { splits: { some: { OR: [{ categoryId: null }, { categoryId: uncategorizedId }] } } },
+        { categorizedBy: "rule" },
+      ],
+    },
     include: { splits: true, account: true },
   });
 
   let updated = 0;
+  const ruleHits = new Map<string, number>();
+
   for (const txn of candidates) {
     // Only auto-recategorize simple (single-split) transactions.
     if (txn.splits.length !== 1) continue;
@@ -179,8 +219,16 @@ export async function reapplyRules(businessId: string): Promise<{ updated: numbe
     const match = categorize(ctx, rules);
     if (!match) continue;
     const categoryId = match.markTransfer ? transferId ?? match.categoryId : match.categoryId;
-    await prisma.split.update({ where: { id: txn.splits[0].id }, data: { categoryId } });
+    await prisma.split.update({
+      where: { id: txn.splits[0].id },
+      data: { categoryId, matchedRuleId: match.ruleId },
+    });
+    await prisma.transaction.update({ where: { id: txn.id }, data: { categorizedBy: "rule" } });
+    ruleHits.set(match.ruleId, (ruleHits.get(match.ruleId) ?? 0) + 1);
     updated++;
   }
-  return { updated };
+
+  await recordRuleHits(businessId, ruleHits);
+  const { linked } = await linkTransfers(businessId);
+  return { updated, transfersLinked: linked };
 }

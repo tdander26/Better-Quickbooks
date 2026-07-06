@@ -4,9 +4,9 @@
 //   unreview      -> reviewed = false
 //   markTransfer  -> collapse each txn to one Transfer split, mark reviewed, flag transferId
 import { NextRequest, NextResponse } from "next/server";
-import { randomUUID } from "crypto";
 import { prisma } from "@/lib/db";
 import { requireBusinessContext } from "@/lib/session";
+import { linkTransfers } from "@/lib/transfers";
 import { TRANSFER_CATEGORY } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -65,8 +65,8 @@ export async function POST(req: NextRequest) {
         continue;
       }
       await prisma.$transaction([
-        prisma.split.update({ where: { id: t.splits[0].id, businessId: ctx.businessId }, data: { categoryId } }),
-        prisma.transaction.update({ where: { id: t.id, businessId: ctx.businessId }, data: { reviewed: true } }),
+        prisma.split.update({ where: { id: t.splits[0].id, businessId: ctx.businessId }, data: { categoryId, matchedRuleId: null } }),
+        prisma.transaction.update({ where: { id: t.id, businessId: ctx.businessId }, data: { reviewed: true, categorizedBy: "manual" } }),
       ]);
       updated++;
     }
@@ -74,6 +74,9 @@ export async function POST(req: NextRequest) {
   }
 
   // ------------------------------------------------------------- markTransfer
+  // Set every selected txn to the Transfer category, then run the shared
+  // pair-matcher over the selection so both sides of a transfer get the SAME
+  // transferId (the old code gave each a random id, leaving pairs unlinked).
   const transferCat = await prisma.category.findFirst({ where: { businessId: ctx.businessId, name: TRANSFER_CATEGORY } });
   const txns = await prisma.transaction.findMany({ where: { businessId: ctx.businessId, id: { in: ids } } });
 
@@ -86,10 +89,11 @@ export async function POST(req: NextRequest) {
       });
       await tx.transaction.update({
         where: { id: t.id, businessId: ctx.businessId },
-        data: { reviewed: true, transferId: t.transferId ?? randomUUID() },
+        data: { reviewed: true, categorizedBy: "manual", transferId: null },
       });
     });
     updated++;
   }
-  return NextResponse.json({ ok: true, updated });
+  const { linked } = await linkTransfers(ctx.businessId, { transactionIds: ids });
+  return NextResponse.json({ ok: true, updated, linked });
 }

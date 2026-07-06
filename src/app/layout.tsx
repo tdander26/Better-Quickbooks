@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Instrument_Sans, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/AppShell";
 import { Providers } from "@/components/Providers";
@@ -6,11 +7,29 @@ import { auth } from "@/auth";
 import { listUserBusinesses } from "@/lib/business";
 import type { ShellData } from "@/lib/nav-types";
 
+// Self-hosted via next/font: fonts are fetched at build time and served from the
+// app's own origin (no runtime dependency on fonts.googleapis.com). The CSS
+// variables below are consumed by globals.css (--font-sans / --font-serif).
+const instrumentSans = Instrument_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-sans-next",
+  display: "swap",
+});
+const instrumentSerif = Instrument_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+  variable: "--font-serif-next",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Better Books",
-  description: "Simple, friendly bookkeeping — profit & loss, balance sheet, and bank feeds.",
+  title: "Ledger — Anderson LLC",
+  description:
+    "A three-pane accounting cockpit — categorize bank & card activity, one tap at a time.",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "Better Books" },
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "Ledger" },
 };
 
 // This app is entirely data-backed; never prerender pages at build time (the
@@ -18,10 +37,11 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export const viewport: Viewport = {
-  themeColor: "#18b463",
+  themeColor: "#2a6b4f",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // Allow zoom for accessibility; the layout is responsive down to phone widths.
+  maximumScale: 5,
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -39,7 +59,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   }
 
   return (
-    <html lang="en">
+    <html lang="en" className={`${instrumentSans.variable} ${instrumentSerif.variable}`}>
       <body>
         <Providers>
           <AppShell shell={shell}>{children}</AppShell>

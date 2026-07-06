@@ -1,54 +1,40 @@
 "use client";
 
-// Responsive navigation shell. Desktop: fixed left sidebar. Mobile: sticky
-// bottom tab bar with large touch targets. The active route is highlighted.
+// Global navigation shell, reskinned to the Ledger design handoff. Desktop: a
+// 236px left rail with the business switcher + the shared nav. Mobile: a sticky
+// bottom tab bar. The Categorize row carries a live "needs review" badge.
+//
+// The Categorize cockpit ("/categorize") renders its own full three-pane layout
+// (including its own left rail), and the auth/onboarding routes render their own
+// full-screen chrome, so they all opt out of this shell.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState, type ReactNode } from "react";
 import { clsx } from "clsx";
-import {
-  LayoutDashboard,
-  Landmark,
-  ArrowLeftRight,
-  BarChart3,
-  Filter,
-  Settings,
-  Users,
-  Wallet,
-} from "lucide-react";
-import type { ReactNode } from "react";
+import { Wallet } from "lucide-react";
+import { NAV, MOBILE_NAV, isActive } from "@/components/nav";
 import { BusinessSwitcher } from "@/components/BusinessSwitcher";
 import { SignOutButton } from "@/components/SignOutButton";
 import type { ShellData } from "@/lib/nav-types";
 
-// Routes that render their own full-screen chrome (auth / onboarding) — the app
-// shell is hidden on these.
-const BARE_ROUTES = ["/login", "/signup", "/select-business", "/business/new", "/invite"];
+// Routes that render their own full-screen chrome (cockpit / auth / onboarding).
+const BARE_ROUTES = [
+  "/login",
+  "/signup",
+  "/select-business",
+  "/business/new",
+  "/invite",
+  "/categorize",
+];
 
 function isBareRoute(pathname: string) {
   return BARE_ROUTES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
 
-const NAV = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/accounts", label: "Accounts", icon: Landmark },
-  { href: "/transactions", label: "Transactions", icon: ArrowLeftRight },
-  { href: "/reports", label: "Reports", icon: BarChart3 },
-  { href: "/rules", label: "Rules", icon: Filter },
-  { href: "/settings/team", label: "Team", icon: Users },
-  { href: "/settings", label: "Settings", icon: Settings },
-];
-
-// The four most-used destinations get the mobile bottom bar; the rest live under
-// Settings / are reachable from the dashboard.
-const MOBILE_NAV = [NAV[0], NAV[2], NAV[3], NAV[5]];
-
-function isActive(pathname: string, href: string) {
-  if (href === "/") return pathname === "/";
-  return pathname === href || pathname.startsWith(href + "/");
-}
-
 export function AppShell({ children, shell }: { children: ReactNode; shell: ShellData | null }) {
   const pathname = usePathname();
+  const badge = useNeedsReviewCount();
+
   if (isBareRoute(pathname) || !shell) return <>{children}</>;
 
   // Highlight the single best (longest) matching nav entry, so /settings/team
@@ -59,12 +45,12 @@ export function AppShell({ children, shell }: { children: ReactNode; shell: Shel
 
   return (
     <div className="min-h-dvh md:flex">
-      {/* Desktop sidebar */}
+      {/* Desktop left rail */}
       <aside
-        className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r px-3 py-5 md:flex"
-        style={{ borderColor: "var(--border)" }}
+        className="sticky top-0 hidden h-dvh shrink-0 flex-col overflow-y-auto border-r px-[18px] pb-[18px] pt-[26px] md:flex"
+        style={{ width: 236, borderColor: "var(--border)" }}
       >
-        <div className="mb-5">
+        <div className="mb-4">
           {shell.businesses.length > 0 ? (
             <BusinessSwitcher businesses={shell.businesses} activeBusinessId={shell.activeBusinessId} />
           ) : (
@@ -72,11 +58,14 @@ export function AppShell({ children, shell }: { children: ReactNode; shell: Shel
               <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-b from-brand-400 to-brand-600 text-white">
                 <Wallet size={18} />
               </div>
-              <div className="text-sm font-semibold">Better Books</div>
+              <span className="serif" style={{ fontSize: 22 }}>
+                Ledger
+              </span>
             </div>
           )}
         </div>
-        <nav className="flex flex-col gap-1">
+
+        <nav className="flex flex-col gap-0.5">
           {NAV.map((item) => {
             const active = item.href === activeHref;
             const Icon = item.icon;
@@ -85,21 +74,36 @@ export function AppShell({ children, shell }: { children: ReactNode; shell: Shel
                 key={item.href}
                 href={item.href}
                 className={clsx(
-                  "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition",
-                  active ? "bg-brand-500/15 text-brand-700 dark:text-brand-300" : "muted hover:bg-black/5 dark:hover:bg-white/5"
+                  "flex items-center justify-between rounded-[7px] px-2.5 py-[9px] text-sm transition",
+                  active ? "font-semibold" : "font-normal hover:bg-[var(--hover)]",
                 )}
+                style={{
+                  color: active ? "var(--text)" : "var(--muted)",
+                  background: active ? "#EFEAE0" : "transparent",
+                }}
               >
-                <Icon size={18} />
-                {item.label}
+                <span className="flex items-center gap-2.5">
+                  <Icon size={16} strokeWidth={active ? 2.25 : 1.75} />
+                  {item.label}
+                </span>
+                {item.hot && badge > 0 && (
+                  <span
+                    className="rounded-full px-[7px] py-px text-[11px] font-semibold"
+                    style={{ background: "var(--accent)", color: "#FAF9F6" }}
+                  >
+                    {badge}
+                  </span>
+                )}
               </Link>
             );
           })}
         </nav>
-        <div className="mt-auto flex flex-col gap-1 px-1 pt-3">
-          <div className="muted truncate px-1 text-xs" title={shell.user.email}>
+
+        <div className="mt-auto flex flex-col gap-1 px-1 pt-6">
+          <div className="truncate px-1 text-xs" style={{ color: "var(--faint)" }} title={shell.user.email}>
             {shell.user.email}
           </div>
-          <SignOutButton className="muted inline-flex items-center gap-1.5 text-xs hover:underline" />
+          <SignOutButton className="inline-flex items-center gap-1.5 text-xs hover:underline" />
         </div>
       </aside>
 
@@ -110,10 +114,12 @@ export function AppShell({ children, shell }: { children: ReactNode; shell: Shel
           className="sticky top-0 z-10 flex items-center gap-2 border-b px-4 py-3 backdrop-blur md:hidden"
           style={{ borderColor: "var(--border)", background: "color-mix(in srgb, var(--bg) 85%, transparent)" }}
         >
-          <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-b from-brand-400 to-brand-600 text-white">
-            <Wallet size={16} />
-          </div>
-          <span className="font-semibold">Better Books</span>
+          <span className="serif" style={{ fontSize: 20 }}>
+            Ledger
+          </span>
+          <span className="truncate uppercase" style={{ fontSize: 9.5, color: "var(--faint)", letterSpacing: "0.08em" }}>
+            {shell.businesses.find((b) => b.id === shell.activeBusinessId)?.name ?? ""}
+          </span>
         </header>
 
         <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-5 pb-24 md:px-6 md:pb-8">{children}</main>
@@ -121,7 +127,7 @@ export function AppShell({ children, shell }: { children: ReactNode; shell: Shel
 
       {/* Mobile bottom nav */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t backdrop-blur md:hidden"
+        className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t backdrop-blur md:hidden"
         style={{ borderColor: "var(--border)", background: "color-mix(in srgb, var(--bg) 92%, transparent)" }}
       >
         {MOBILE_NAV.map((item) => {
@@ -131,17 +137,43 @@ export function AppShell({ children, shell }: { children: ReactNode; shell: Shel
             <Link
               key={item.href}
               href={item.href}
-              className={clsx(
-                "flex flex-col items-center gap-1 py-2.5 text-[11px] font-medium",
-                active ? "text-brand-600 dark:text-brand-400" : "muted"
-              )}
+              className="relative flex flex-col items-center gap-1 py-2.5 text-[11px] font-medium"
+              style={{ color: active ? "var(--accent)" : "var(--muted)" }}
             >
               <Icon size={20} />
               {item.label}
+              {item.hot && badge > 0 && (
+                <span
+                  className="absolute right-1/2 top-1 translate-x-[14px] rounded-full px-[5px] text-[9px] font-semibold"
+                  style={{ background: "var(--accent)", color: "#FAF9F6" }}
+                >
+                  {badge}
+                </span>
+              )}
             </Link>
           );
         })}
       </nav>
     </div>
   );
+}
+
+// Live count of transactions still needing review, for the Categorize badge.
+function useNeedsReviewCount(): number {
+  const [count, setCount] = useState(0);
+  const pathname = usePathname();
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/transactions?filter=needs_review&page=1")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d && typeof d.total === "number") setCount(d.total);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // Re-fetch on navigation so filing on the cockpit updates the badge elsewhere.
+  }, [pathname]);
+  return count;
 }

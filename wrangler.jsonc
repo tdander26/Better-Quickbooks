@@ -1,0 +1,21 @@
+{
+  // Cloudflare Workers config for the OpenNext build of the app.
+  // Deploy with:  npm run cf:deploy   (after `npm run cf:build`)
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ledger",
+  "main": ".open-next/worker.js",
+  // nodejs_compat is required for the Next.js runtime + Prisma driver adapter.
+  // The date must be >= 2024-09-23 for nodejs_compat to be available.
+  "compatibility_date": "2025-03-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  }
+  // Secrets (set via `wrangler secret put`, NOT committed):
+  //   APP_PASSWORD, ENCRYPTION_KEY, TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
+  //   (optional) NEXT_PUBLIC_DEMO_LOGIN — but public vars are better set at build time
+}

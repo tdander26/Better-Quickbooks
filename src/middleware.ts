@@ -12,7 +12,7 @@ const PUBLIC_PATHS = [
   "/login",
   "/signup",
   "/invite",
-  "/api/auth", // NextAuth routes + our /api/auth/register
+  "/api/auth", // NextAuth routes + our /api/auth/register + /api/auth/demo
   "/api/stripe/webhook",
   "/api/health",
   "/manifest.webmanifest",

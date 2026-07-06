@@ -46,7 +46,7 @@ async function seedFinancials(
   const incomeCat = await categoryId(businessId, "Patient Revenue");
   const expenseCat = await categoryId(businessId, "Office Supplies");
 
-  await prisma.transaction.create({
+  const incomeTxn = await prisma.transaction.create({
     data: {
       businessId,
       accountId: account.id,
@@ -66,6 +66,30 @@ async function seedFinancials(
       splits: { create: [{ businessId, amountCents: opts.expense, categoryId: expenseCat }] },
     },
   });
+
+  // New (post-merge) tenant-scoped models: Budget, Attachment, Statement.
+  await prisma.budget.create({
+    data: { businessId, categoryId: expenseCat, month: "2026-06", amountCents: 25000 },
+  });
+  await prisma.attachment.create({
+    data: {
+      businessId,
+      transactionId: incomeTxn.id,
+      filename: "receipt.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1234,
+      dataBase64: "AAAA",
+    },
+  });
+  await prisma.statement.create({
+    data: {
+      businessId,
+      accountId: account.id,
+      endDate: new Date("2026-06-30T12:00:00Z"),
+      endingBalanceCents: opts.opening + opts.income + opts.expense,
+      transactionCount: 2,
+    },
+  });
   return account.id;
 }
 
@@ -80,6 +104,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const id of createdBusinessIds) {
+    await prisma.attachment.deleteMany({ where: { businessId: id } });
+    await prisma.statement.deleteMany({ where: { businessId: id } });
+    await prisma.budget.deleteMany({ where: { businessId: id } });
     await prisma.split.deleteMany({ where: { businessId: id } });
     await prisma.transaction.deleteMany({ where: { businessId: id } });
     await prisma.rule.deleteMany({ where: { businessId: id } });
@@ -127,6 +154,31 @@ describe("tenant isolation", () => {
     expect(t2).toHaveLength(2);
     expect(t1.every((t) => t.businessId === b1)).toBe(true);
     expect(t2.every((t) => t.businessId === b2)).toBe(true);
+  });
+
+  it("new models (Budget/Attachment/Statement) are per-business", async () => {
+    for (const [biz, other] of [
+      [b1, b2],
+      [b2, b1],
+    ] as const) {
+      const budgets = await prisma.budget.findMany({ where: { businessId: biz } });
+      const attachments = await prisma.attachment.findMany({ where: { businessId: biz } });
+      const statements = await prisma.statement.findMany({ where: { businessId: biz } });
+      expect(budgets).toHaveLength(1);
+      expect(attachments).toHaveLength(1);
+      expect(statements).toHaveLength(1);
+      expect(budgets.every((r) => r.businessId === biz)).toBe(true);
+      expect(attachments.every((r) => r.businessId === biz)).toBe(true);
+      expect(statements.every((r) => r.businessId === biz)).toBe(true);
+      // The other tenant's rows never appear.
+      const otherBudget = await prisma.budget.findFirst({ where: { businessId: other } });
+      expect(otherBudget?.businessId).toBe(other);
+    }
+
+    // Budget uniqueness is now per-business: both businesses can hold the same
+    // (categoryId is different per business, but month collides) without conflict.
+    const allJune = await prisma.budget.findMany({ where: { month: "2026-06", businessId: { in: [b1, b2] } } });
+    expect(allJune.length).toBe(2);
   });
 
   it("import dedupe is per-business (same providerTxnId imports in both)", async () => {

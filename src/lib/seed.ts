@@ -7,31 +7,32 @@
 
 import { prisma } from "@/lib/db";
 import { hashPassword } from "@/lib/password";
+import { linkTransfers } from "@/lib/transfers";
 
 const c = (dollars: number) => Math.round(dollars * 100);
 
 type Sec = "income" | "expense" | "asset" | "liability" | "equity" | "transfer";
 
-const CATEGORIES: { name: string; section: Sec; icon?: string; system?: boolean }[] = [
-  { name: "Patient Revenue", section: "income", icon: "stethoscope" },
-  { name: "Consulting Income", section: "income", icon: "briefcase" },
-  { name: "Interest Income", section: "income", icon: "percent" },
-  { name: "Other Income", section: "income", icon: "plus-circle" },
-  { name: "Payroll", section: "expense", icon: "users" },
-  { name: "Rent", section: "expense", icon: "building" },
-  { name: "Medical Supplies", section: "expense", icon: "cross" },
-  { name: "Office Supplies", section: "expense", icon: "paperclip" },
-  { name: "Software & Subscriptions", section: "expense", icon: "monitor" },
-  { name: "Insurance", section: "expense", icon: "shield" },
-  { name: "Utilities", section: "expense", icon: "zap" },
-  { name: "Meals & Entertainment", section: "expense", icon: "utensils" },
-  { name: "Travel", section: "expense", icon: "plane" },
-  { name: "Professional Fees", section: "expense", icon: "scale" },
-  { name: "Continuing Education", section: "expense", icon: "graduation-cap" },
-  { name: "Bank & Merchant Fees", section: "expense", icon: "credit-card" },
-  { name: "Taxes", section: "expense", icon: "landmark" },
-  { name: "Auto & Fuel", section: "expense", icon: "car" },
-  { name: "Marketing", section: "expense", icon: "megaphone" },
+const CATEGORIES: { name: string; section: Sec; icon?: string; system?: boolean; taxLine?: string }[] = [
+  { name: "Patient Revenue", section: "income", icon: "stethoscope", taxLine: "Schedule C, Line 1 — Gross receipts" },
+  { name: "Consulting Income", section: "income", icon: "briefcase", taxLine: "Schedule C, Line 1 — Gross receipts" },
+  { name: "Interest Income", section: "income", icon: "percent", taxLine: "Schedule B, Line 1 — Interest" },
+  { name: "Other Income", section: "income", icon: "plus-circle", taxLine: "Schedule C, Line 6 — Other income" },
+  { name: "Payroll", section: "expense", icon: "users", taxLine: "Schedule C, Line 26 — Wages" },
+  { name: "Rent", section: "expense", icon: "building", taxLine: "Schedule C, Line 20b — Rent (other)" },
+  { name: "Medical Supplies", section: "expense", icon: "cross", taxLine: "Schedule C, Line 22 — Supplies" },
+  { name: "Office Supplies", section: "expense", icon: "paperclip", taxLine: "Schedule C, Line 22 — Supplies" },
+  { name: "Software & Subscriptions", section: "expense", icon: "monitor", taxLine: "Schedule C, Line 27a — Other expenses" },
+  { name: "Insurance", section: "expense", icon: "shield", taxLine: "Schedule C, Line 15 — Insurance" },
+  { name: "Utilities", section: "expense", icon: "zap", taxLine: "Schedule C, Line 25 — Utilities" },
+  { name: "Meals & Entertainment", section: "expense", icon: "utensils", taxLine: "Schedule C, Line 24b — Meals" },
+  { name: "Travel", section: "expense", icon: "plane", taxLine: "Schedule C, Line 24a — Travel" },
+  { name: "Professional Fees", section: "expense", icon: "scale", taxLine: "Schedule C, Line 17 — Legal & professional" },
+  { name: "Continuing Education", section: "expense", icon: "graduation-cap", taxLine: "Schedule C, Line 27a — Other expenses" },
+  { name: "Bank & Merchant Fees", section: "expense", icon: "credit-card", taxLine: "Schedule C, Line 10 — Commissions & fees" },
+  { name: "Taxes", section: "expense", icon: "landmark", taxLine: "Schedule C, Line 23 — Taxes & licenses" },
+  { name: "Auto & Fuel", section: "expense", icon: "car", taxLine: "Schedule C, Line 9 — Car & truck" },
+  { name: "Marketing", section: "expense", icon: "megaphone", taxLine: "Schedule C, Line 8 — Advertising" },
   { name: "Uncategorized", section: "expense", icon: "help-circle", system: true },
   { name: "Owner's Draw", section: "equity", icon: "arrow-up-circle" },
   { name: "Owner's Contribution", section: "equity", icon: "arrow-down-circle" },
@@ -82,7 +83,15 @@ export async function seedBusinessDefaults(businessId: string): Promise<Map<stri
   for (let i = 0; i < CATEGORIES.length; i++) {
     const cat = CATEGORIES[i];
     const created = await prisma.category.create({
-      data: { businessId, name: cat.name, section: cat.section, icon: cat.icon ?? "", isSystem: cat.system ?? false, sortOrder: i },
+      data: {
+        businessId,
+        name: cat.name,
+        section: cat.section,
+        icon: cat.icon ?? "",
+        taxLine: cat.taxLine ?? "",
+        isSystem: cat.system ?? false,
+        sortOrder: i,
+      },
     });
     catId.set(cat.name, created.id);
   }
@@ -184,6 +193,35 @@ export async function seedDemoData(): Promise<SeedResult> {
   rows.push({ acct: "card", date: "2026-07-02", amount: -47.5, payee: "Kwik Trip", description: "KWIK TRIP 442", pending: true });
   rows.push({ acct: "card", date: "2026-07-03", amount: -96.13, payee: "Menards", description: "MENARDS PURCHASE", pending: true });
 
+  // ---- Unreviewed inbox (no category => reviewed:false) --------------------
+  // Feeds the Categorize cockpit: repeated merchants become Smart batches (via
+  // rules or filing history); the rest are Power-grid one-offs. One Amazon
+  // refund is an opposite-signed outlier so a batch surfaces a review flag.
+  const inbox: { acct: string; date: string; amount: number; payee: string; description: string }[] = [
+    // Amazon ×4 (rule -> Office Supplies), incl. a refund that should get flagged
+    { acct: "card", date: "2026-07-01", amount: -128.44, payee: "Amazon", description: "AMAZON.COM PURCHASE" },
+    { acct: "card", date: "2026-07-02", amount: -63.19, payee: "Amazon", description: "AMAZON.COM PURCHASE" },
+    { acct: "card", date: "2026-07-03", amount: -212.6, payee: "Amazon", description: "AMAZON.COM PURCHASE" },
+    { acct: "card", date: "2026-07-04", amount: 41.2, payee: "Amazon", description: "AMAZON.COM REFUND" },
+    // Uber ×3 (rule -> Travel)
+    { acct: "card", date: "2026-07-01", amount: -18.2, payee: "Uber", description: "UBER TRIP" },
+    { acct: "card", date: "2026-07-02", amount: -24.75, payee: "Uber", description: "UBER TRIP" },
+    { acct: "card", date: "2026-07-03", amount: -31.4, payee: "Uber", description: "UBER TRIP" },
+    // Adobe ×2 (rule -> Software & Subscriptions)
+    { acct: "card", date: "2026-07-01", amount: -52.99, payee: "Adobe", description: "ADOBE CREATIVE CLOUD" },
+    { acct: "card", date: "2026-07-03", amount: -22.99, payee: "Adobe", description: "ADOBE STOCK" },
+    // Henry Schein ×2 (no rule; suggested from filing history -> Medical Supplies)
+    { acct: "card", date: "2026-07-02", amount: -418.5, payee: "Henry Schein", description: "HENRY SCHEIN MEDICAL" },
+    { acct: "card", date: "2026-07-04", amount: -276.15, payee: "Henry Schein", description: "HENRY SCHEIN MEDICAL" },
+    // One-offs (varied suggestion confidence)
+    { acct: "chase", date: "2026-07-04", amount: 10480, payee: "Stripe", description: "STRIPE TRANSFER PAYOUT" }, // rule -> Patient Revenue
+    { acct: "card", date: "2026-07-03", amount: -212.9, payee: "Shell", description: "SHELL OIL 4413" }, // rule -> Auto & Fuel
+    { acct: "card", date: "2026-07-02", amount: -312.19, payee: "AWS", description: "AMAZON WEB SERVICES" }, // no match -> Choose
+    { acct: "card", date: "2026-07-01", amount: -284.77, payee: "Home Depot", description: "THE HOME DEPOT #2418" }, // no match
+    { acct: "card", date: "2026-07-02", amount: -42.1, payee: "USPS", description: "USPS PO 2841" }, // no match
+  ];
+  for (const r of inbox) rows.push(r);
+
   const uncategorizedId = catId.get("Uncategorized")!;
   let count = 0;
   for (const r of rows) {
@@ -199,11 +237,16 @@ export async function seedDemoData(): Promise<SeedResult> {
         description: r.description,
         pending: r.pending ?? false,
         reviewed: r.category ? true : false,
+        categorizedBy: r.category ? "manual" : null,
         splits: { create: [{ businessId, amountCents, categoryId }] },
       },
     });
     count++;
   }
+
+  // Link the paired demo transfers (Chase<->Ally, card payments) so the
+  // transfer-linking feature is visible out of the box.
+  await linkTransfers(businessId);
 
   return { user: email, business: business.name, categories: CATEGORIES.length, rules: RULES.length, accounts: 4, transactions: count };
 }

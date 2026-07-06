@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseISO, endOfDay, startOfYear, format } from "date-fns";
 import { prisma } from "@/lib/db";
 import { requireBusinessContext } from "@/lib/session";
-import { profitAndLoss, balanceSheet, cashFlow } from "@/lib/reports";
+import { profitAndLoss, balanceSheetAsOf, cashFlow } from "@/lib/reports";
 import { UNCATEGORIZED } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -57,12 +57,13 @@ export async function GET(req: NextRequest) {
       ? typeParam
       : "pl";
   const { start, end } = resolveRange(url);
+  const accountId = url.searchParams.get("account") || undefined;
 
   const rows: (string | number)[][] = [];
   let name = "report";
 
   if (type === "pl") {
-    const pl = await profitAndLoss(ctx.businessId, start, end);
+    const pl = await profitAndLoss(ctx.businessId, start, end, accountId);
     name = "profit-and-loss";
     rows.push(["Section", "Category", "Amount"]);
     for (const l of pl.income) rows.push(["Income", l.category, money(l.amountCents)]);
@@ -71,7 +72,7 @@ export async function GET(req: NextRequest) {
     rows.push(["Expense", "Total expenses", money(pl.totalExpenseCents)]);
     rows.push(["Net", "Net income", money(pl.netIncomeCents)]);
   } else if (type === "cashflow") {
-    const cf = await cashFlow(ctx.businessId, start, end);
+    const cf = await cashFlow(ctx.businessId, start, end, accountId);
     const totalIn = cf.inflows.reduce((n, l) => n + l.amountCents, 0);
     const totalOut = cf.outflows.reduce((n, l) => n + l.amountCents, 0);
     name = "cash-flow";
@@ -82,7 +83,8 @@ export async function GET(req: NextRequest) {
     rows.push(["Money Out", "Total out", money(totalOut)]);
     rows.push(["Net", "Net change", money(cf.netCents)]);
   } else if (type === "balance") {
-    const bs = await balanceSheet(ctx.businessId);
+    // Point-in-time balance sheet as of the end of the selected range.
+    const bs = await balanceSheetAsOf(ctx.businessId, end);
     name = "balance-sheet";
     rows.push(["Section", "Account", "Institution", "Amount"]);
     for (const a of bs.assets) rows.push(["Asset", a.name, a.institution, money(a.computedCents)]);
@@ -94,7 +96,12 @@ export async function GET(req: NextRequest) {
   } else {
     // transactions — the full register for the range (one row per transaction).
     const txns = await prisma.transaction.findMany({
-      where: { businessId: ctx.businessId, postedAt: { gte: start, lte: end }, account: { archived: false } },
+      where: {
+        businessId: ctx.businessId,
+        postedAt: { gte: start, lte: end },
+        account: { archived: false },
+        ...(accountId ? { accountId } : {}),
+      },
       orderBy: [{ postedAt: "asc" }, { createdAt: "asc" }],
       include: { account: true, splits: { include: { category: true } } },
     });
