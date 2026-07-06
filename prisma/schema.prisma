@@ -12,8 +12,10 @@
 generator client {
   provider = "prisma-client-js"
   // driverAdapters lets us hand Prisma a libSQL/Turso connection at runtime
-  // (see src/lib/db.ts) for Cloudflare Workers hosting. Local dev + the CLI
-  // still use the plain SQLite `file:` datasource below.
+  // (see src/lib/db.ts). For Cloudflare Workers, the Prisma client is also listed
+  // in next.config's serverExternalPackages so OpenNext can patch it for the
+  // workerd runtime (otherwise its engine does an unsupported fs.readdir). Keep
+  // the DEFAULT output dir — OpenNext can only patch the un-relocated client.
   previewFeatures = ["driverAdapters"]
 }
 

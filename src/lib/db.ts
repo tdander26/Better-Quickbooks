@@ -1,56 +1,29 @@
 import { PrismaClient } from "@prisma/client";
+import { PrismaLibSQL } from "@prisma/adapter-libsql/web";
 
-// The Prisma client is created against one of three backends, chosen at runtime:
+// With the queryCompiler generator (see prisma/schema.prisma) Prisma ships as a
+// pure-TypeScript client with no query engine and no filesystem access — which is
+// what lets it run on the Cloudflare Workers runtime. A libSQL driver adapter is
+// therefore required in EVERY environment:
 //
-//   1. Turso (libSQL)  — when TURSO_DATABASE_URL is set. This is the Cloudflare
-//      Workers path: Prisma talks to Turso over HTTP via the libSQL driver
-//      adapter (works on the Workers runtime, which has no TCP sockets).
-//   2. Netlify DB (Neon/Postgres) — when a NETLIFY_DATABASE_URL is available.
-//   3. Local SQLite file — the default for `npm run dev` and the CLI.
+//   - Production (Cloudflare Workers): Turso, via TURSO_DATABASE_URL/_AUTH_TOKEN.
+//   - Local dev / CLI: point TURSO_DATABASE_URL at your Turso DB, or run a local
+//     libSQL server with `turso dev` and use its http URL. (See docs/DEPLOY_*.)
 //
-// Only one is active per environment; the imports for the others are harmless.
-
-/** Netlify DB (Neon) connection string, if running on Netlify. */
-function resolveNetlifyUrl(): string | undefined {
-  if (process.env.NETLIFY_DATABASE_URL) return process.env.NETLIFY_DATABASE_URL;
-  if (process.env.NETLIFY_DATABASE_URL_UNPOOLED) return process.env.NETLIFY_DATABASE_URL_UNPOOLED;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require("@netlify/database");
-    const url = mod?.getConnectionString?.();
-    return url || undefined;
-  } catch {
-    return undefined;
-  }
-}
+// The "web" build of the adapter speaks HTTP and works on both Workers and Node.
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 function createPrisma(): PrismaClient {
-  const log: ("error" | "warn")[] =
-    process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"];
-
-  // 1) Turso / libSQL (Cloudflare Workers). Use the "web" build of the adapter —
-  //    it speaks HTTP and runs on the Workers runtime (and on Node 18+).
+  // Production (Cloudflare Workers): Turso over HTTP via the libSQL driver
+  // adapter (the "web" build runs on the Workers runtime).
   const tursoUrl = process.env.TURSO_DATABASE_URL;
   if (tursoUrl) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { PrismaLibSQL } = require("@prisma/adapter-libsql/web");
-    const adapter = new PrismaLibSQL({
-      url: tursoUrl,
-      authToken: process.env.TURSO_AUTH_TOKEN,
-    });
-    return new PrismaClient({ adapter, log });
+    const adapter = new PrismaLibSQL({ url: tursoUrl, authToken: process.env.TURSO_AUTH_TOKEN });
+    return new PrismaClient({ adapter });
   }
-
-  // 2) Netlify DB (Neon / Postgres).
-  const netlifyUrl = resolveNetlifyUrl();
-  if (netlifyUrl) {
-    return new PrismaClient({ datasourceUrl: netlifyUrl, log });
-  }
-
-  // 3) Local SQLite file (dev / CLI).
-  return new PrismaClient({ log });
+  // Local dev / CLI: the SQLite file from the DATABASE_URL datasource.
+  return new PrismaClient();
 }
 
 export const prisma = globalForPrisma.prisma ?? createPrisma();
