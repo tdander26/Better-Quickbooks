@@ -18,6 +18,7 @@ import type {
   CockpitTxn,
   CockpitBatch,
   CockpitActivity,
+  CockpitCategory,
   Confidence,
 } from "@/lib/cockpit";
 
@@ -106,6 +107,25 @@ export function Cockpit({ data }: { data: CockpitData }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
 
+  // Smart-batch category editing (desktop dropdown / mobile sheet share this key).
+  const [batchPickerKey, setBatchPickerKey] = useState<string | null>(null);
+  const [batchQuery, setBatchQuery] = useState("");
+
+  // Rule-suggestion editor.
+  const [ruleEditorOpen, setRuleEditorOpen] = useState(false);
+  const [ruleError, setRuleError] = useState<string | null>(null);
+  const [dismissedAttention, setDismissedAttention] = useState<Set<string>>(new Set());
+  const [ruleDraft, setRuleDraft] = useState(() => {
+    const rs = data.ruleSuggestion;
+    return {
+      name: rs?.defaultName ?? "",
+      matchField: "payee",
+      operator: "contains",
+      value: rs?.payee ?? "",
+      categoryId: rs?.categoryId ?? "",
+    };
+  });
+
   // Mobile: a bottom-sheet category picker replaces the desktop inline grid.
   const isMobile = useIsMobile();
   const [sheetTxn, setSheetTxn] = useState<CockpitTxn | null>(null);
@@ -165,39 +185,47 @@ export function Cockpit({ data }: { data: CockpitData }) {
       undoRef.current = { kind: "one", txn, index: idx, categoryName, amountCents: cents, activityId };
       setCanUndo(Boolean(data.uncategorizedId));
 
-      // Advance to the next unfiled row and keep the flow going.
+      // Move the active-row highlight to the next unfiled row, but keep its
+      // picker CLOSED — the user opens a picker deliberately by clicking.
       const nextActive = newList[Math.min(idx, newList.length - 1)]?.id ?? null;
       setActiveId(nextActive);
       setQuery("");
       setHighlight(0);
-      setPickerOpen(Boolean(nextActive));
-      if (nextActive) requestAnimationFrame(() => inputRef.current?.focus());
+      setPickerOpen(false);
     },
     [busy, oneOffs, addTally, data.uncategorizedId],
   );
+
+  // ---- Create a category, register it in local state, and return it ----
+  const createCategory = useCallback(async (name: string): Promise<CockpitCategory | null> => {
+    let created: { id: string; name: string; section: string } | null = null;
+    try {
+      const r = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, section: "expense" }),
+      });
+      if (r.ok) created = (await r.json()).category;
+    } catch {
+      /* ignore */
+    }
+    if (!created) return null;
+    const cat: CockpitCategory = { id: created.id, name: created.name, section: created.section };
+    setCategories((prev) => [...prev, cat]);
+    return cat;
+  }, []);
 
   // ---- Create a category from typed text, then file ----
   const createAndFile = useCallback(
     async (txn: CockpitTxn, name: string) => {
       if (busy) return;
       setBusy(true);
-      let created: { id: string; name: string; section: string } | null = null;
-      try {
-        const r = await fetch("/api/categories", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, section: "expense" }),
-        });
-        if (r.ok) created = (await r.json()).category;
-      } catch {
-        /* ignore */
-      }
+      const cat = await createCategory(name);
       setBusy(false);
-      if (!created) return;
-      setCategories((prev) => [...prev, { id: created!.id, name: created!.name, section: created!.section }]);
-      await fileOne(txn, created.id, created.name);
+      if (!cat) return;
+      await fileOne(txn, cat.id, cat.name);
     },
-    [busy, fileOne],
+    [busy, createCategory, fileOne],
   );
 
   // ---- File a whole Smart batch ----
@@ -284,6 +312,113 @@ export function Cockpit({ data }: { data: CockpitData }) {
     if (member) setOneOffs((prev) => [member, ...prev]);
   }, []);
 
+  // ---- Change a batch's target category (before filing) ----
+  const setBatchCategory = useCallback((batch: CockpitBatch, cat: { id: string; name: string }) => {
+    setBatches((prev) =>
+      prev.map((b) =>
+        b.key !== batch.key
+          ? b
+          : {
+              ...b,
+              suggestedCategoryId: cat.id,
+              suggestedCategoryName: cat.name,
+              sub: b.totalInflow ? `Deposits → ${cat.name}` : `→ ${cat.name}`,
+              cta: `File all ${b.count}`,
+            },
+      ),
+    );
+    setBatchPickerKey(null);
+    setBatchQuery("");
+  }, []);
+
+  // ---- Dismiss a batch: break it into individual one-offs (nothing is lost) ----
+  const dismissBatch = useCallback(
+    (batch: CockpitBatch) => {
+      setOneOffs((prev) => [...batch.members, ...prev]);
+      setBatches((prev) => prev.filter((b) => b.key !== batch.key));
+      setBatchPickerKey((k) => (k === batch.key ? null : k));
+    },
+    [],
+  );
+
+  // Category options for the batch picker (mirrors the one-off type-ahead).
+  const batchPickerBatch = batches.find((b) => b.key === batchPickerKey) ?? null;
+  const batchOptions = useMemo(() => {
+    const q = batchQuery.trim().toLowerCase();
+    if (q) return categories.filter((c) => c.name.toLowerCase().includes(q));
+    return categories;
+  }, [batchQuery, categories]);
+  const batchCanCreate =
+    batchQuery.trim().length > 0 &&
+    !categories.some((c) => c.name.toLowerCase() === batchQuery.trim().toLowerCase());
+
+  const pickBatchCategory = useCallback(
+    (cat: { id: string; name: string }) => {
+      if (batchPickerBatch) setBatchCategory(batchPickerBatch, cat);
+    },
+    [batchPickerBatch, setBatchCategory],
+  );
+  const createBatchCategory = useCallback(async () => {
+    const batch = batchPickerBatch;
+    if (!batch || busy) return;
+    setBusy(true);
+    const cat = await createCategory(batchQuery.trim());
+    setBusy(false);
+    if (cat) setBatchCategory(batch, cat);
+  }, [batchPickerBatch, busy, batchQuery, createCategory, setBatchCategory]);
+
+  // ---- Create a rule from the suggestion editor ----
+  const createRule = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    setRuleError(null);
+    let ok = false;
+    let errMsg: string | null = null;
+    try {
+      const r = await fetch("/api/rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: ruleDraft.name.trim(),
+          matchField: ruleDraft.matchField,
+          operator: ruleDraft.operator,
+          value: ruleDraft.value.trim(),
+          categoryId: ruleDraft.categoryId,
+          priority: 100,
+          enabled: true,
+        }),
+      });
+      ok = r.ok;
+      if (!ok) {
+        const j = await r.json().catch(() => null);
+        errMsg = j?.error ?? "Could not create the rule.";
+      }
+    } catch {
+      errMsg = "Could not create the rule.";
+    }
+    setBusy(false);
+    if (!ok) {
+      setRuleError(errMsg);
+      return;
+    }
+    setRuleEditorOpen(false);
+    setDismissedAttention((prev) => new Set(prev).add("rule-suggestion"));
+  }, [busy, ruleDraft]);
+
+  const openRuleEditor = useCallback(() => {
+    const rs = data.ruleSuggestion;
+    if (!rs) return;
+    setRuleDraft({
+      name: rs.defaultName,
+      matchField: "payee",
+      operator: "contains",
+      value: rs.payee,
+      categoryId: rs.categoryId,
+    });
+    setRuleError(null);
+    setRuleEditorOpen(true);
+  }, [data.ruleSuggestion]);
+
   // ---- Category type-ahead options for the active row ----
   const activeTxn = oneOffs.find((t) => t.id === activeId) ?? null;
   const options = useMemo(() => {
@@ -322,6 +457,20 @@ export function Cockpit({ data }: { data: CockpitData }) {
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
+  // Skip past a row without filing: move the highlight to the next (or previous)
+  // row and keep the picker closed. The txn stays in the one-offs list.
+  const skipRow = useCallback(
+    (id: string) => {
+      const idx = oneOffs.findIndex((t) => t.id === id);
+      const next = oneOffs[idx + 1] ?? oneOffs[idx - 1] ?? null;
+      setActiveId(next?.id ?? null);
+      setPickerOpen(false);
+      setQuery("");
+      setHighlight(0);
+    },
+    [oneOffs],
+  );
+
   // ---- Mobile bottom-sheet picker ----
   const sheetOptions = useMemo(() => {
     const q = sheetQuery.trim().toLowerCase();
@@ -348,30 +497,41 @@ export function Cockpit({ data }: { data: CockpitData }) {
     [oneOffs],
   );
 
+  // After filing from the sheet, CLOSE it — don't auto-jump onto the next
+  // transaction. The user re-opens a sheet (or taps Skip) deliberately.
   const pickFromSheet = useCallback(
     (c: { id: string; name: string }) => {
       const txn = sheetTxn;
       if (!txn) return;
-      advanceSheet(txn);
+      setSheetTxn(null);
+      setSheetQuery("");
       void fileOne(txn, c.id, c.name);
     },
-    [sheetTxn, advanceSheet, fileOne],
+    [sheetTxn, fileOne],
   );
 
   const createFromSheet = useCallback(() => {
     const txn = sheetTxn;
     if (!txn) return;
     const name = sheetQuery.trim();
-    advanceSheet(txn);
+    setSheetTxn(null);
+    setSheetQuery("");
     void createAndFile(txn, name);
-  }, [sheetTxn, sheetQuery, advanceSheet, createAndFile]);
+  }, [sheetTxn, sheetQuery, createAndFile]);
 
   const acceptSuggestionMobile = useCallback(() => {
     const txn = sheetTxn;
     if (!txn?.suggestedCategoryId || !txn.suggestedCategoryName) return;
-    advanceSheet(txn);
+    setSheetTxn(null);
+    setSheetQuery("");
     void fileOne(txn, txn.suggestedCategoryId, txn.suggestedCategoryName);
-  }, [sheetTxn, advanceSheet, fileOne]);
+  }, [sheetTxn, fileOne]);
+
+  // Explicit "Skip →": advance the sheet to the next transaction without
+  // filing the current one (it stays in the one-offs list).
+  const skipSheet = useCallback(() => {
+    if (sheetTxn) advanceSheet(sheetTxn);
+  }, [sheetTxn, advanceSheet]);
 
   function onInputKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "ArrowDown") {
@@ -570,6 +730,22 @@ export function Cockpit({ data }: { data: CockpitData }) {
                     onToggle={() => setExpanded((e) => ({ ...e, [b.key]: !e[b.key] }))}
                     onFile={() => fileBatch(b)}
                     onFlag={(id) => pullOut(b, id)}
+                    onDismiss={() => dismissBatch(b)}
+                    onChangeCategory={() => {
+                      setBatchPickerKey(b.key);
+                      setBatchQuery("");
+                    }}
+                    desktopPickerOpen={!isMobile && batchPickerKey === b.key}
+                    pickerQuery={batchQuery}
+                    pickerOptions={batchOptions}
+                    pickerCanCreate={batchCanCreate}
+                    onPickerQuery={setBatchQuery}
+                    onPickCategory={pickBatchCategory}
+                    onCreateCategory={createBatchCategory}
+                    onClosePicker={() => {
+                      setBatchPickerKey(null);
+                      setBatchQuery("");
+                    }}
                   />
                 ))}
               </div>
@@ -630,7 +806,7 @@ export function Cockpit({ data }: { data: CockpitData }) {
                 <span>Description</span>
                 <span style={{ textAlign: "right", paddingRight: 16 }}>Amount</span>
                 <span>Category</span>
-                <span />
+                <span style={{ textAlign: "center" }} />
               </div>
 
               {oneOffs.map((t) => (
@@ -659,6 +835,7 @@ export function Cockpit({ data }: { data: CockpitData }) {
                   onKey={onInputKey}
                   onHover={(i) => setHighlight(i)}
                   onPick={(i) => commitIndex(i)}
+                  onSkip={() => skipRow(t.id)}
                 />
               ))}
             </div>
@@ -710,37 +887,55 @@ export function Cockpit({ data }: { data: CockpitData }) {
         <div style={{ padding: "26px 22px 8px" }}>
           <div style={{ ...uppercaseLabel, paddingBottom: 13 }}>Needs attention</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {data.attention.length === 0 && (
-              <div style={{ fontSize: 12.5, color: T.faint }}>Nothing needs attention right now.</div>
-            )}
-            {data.attention.map((task) => (
-              <div
-                key={task.id}
-                style={{
-                  background: T.card,
-                  border: `1px solid ${T.border}`,
-                  borderRadius: 10,
-                  padding: "13px 14px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 3,
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontWeight: 600, fontSize: 13.5 }}>{task.title}</span>
-                  <span
+            {(() => {
+              const visible = data.attention.filter((t) => !dismissedAttention.has(t.id));
+              if (visible.length === 0)
+                return <div style={{ fontSize: 12.5, color: T.faint }}>Nothing needs attention right now.</div>;
+              return visible.map((task) => {
+                const clickable = task.id === "rule-suggestion" && !!data.ruleSuggestion;
+                return (
+                  <div
+                    key={task.id}
+                    onClick={clickable ? openRuleEditor : undefined}
                     style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: task.tagTone === "red" ? T.red : task.tagTone === "accent" ? T.accent : T.muted,
+                      background: T.card,
+                      border: `1px solid ${T.border}`,
+                      borderRadius: 10,
+                      padding: "13px 14px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 3,
+                      cursor: clickable ? "pointer" : "default",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (clickable) e.currentTarget.style.background = T.hoverSoft;
+                    }}
+                    onMouseLeave={(e) => {
+                      if (clickable) e.currentTarget.style.background = T.card;
                     }}
                   >
-                    {task.tag}
-                  </span>
-                </div>
-                <span style={{ fontSize: 12.5, color: T.faint, lineHeight: 1.45 }}>{task.detail}</span>
-              </div>
-            ))}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: 600, fontSize: 13.5 }}>{task.title}</span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: task.tagTone === "red" ? T.red : task.tagTone === "accent" ? T.accent : T.muted,
+                        }}
+                      >
+                        {task.tag}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 12.5, color: T.faint, lineHeight: 1.45 }}>{task.detail}</span>
+                    {clickable && (
+                      <span style={{ fontSize: 11.5, color: T.accent, fontWeight: 500, paddingTop: 2 }}>
+                        Create rule →
+                      </span>
+                    )}
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
 
@@ -880,7 +1075,39 @@ export function Cockpit({ data }: { data: CockpitData }) {
           onPick={pickFromSheet}
           onCreate={createFromSheet}
           onAccept={acceptSuggestionMobile}
+          onSkip={skipSheet}
           onClose={() => setSheetTxn(null)}
+        />
+      )}
+
+      {/* ============ MOBILE BATCH CATEGORY SHEET ============ */}
+      {isMobile && batchPickerBatch && (
+        <BatchCategorySheet
+          batch={batchPickerBatch}
+          query={batchQuery}
+          options={batchOptions}
+          canCreate={batchCanCreate}
+          busy={busy}
+          onQuery={setBatchQuery}
+          onPick={pickBatchCategory}
+          onCreate={createBatchCategory}
+          onClose={() => {
+            setBatchPickerKey(null);
+            setBatchQuery("");
+          }}
+        />
+      )}
+
+      {/* ============ RULE SUGGESTION EDITOR ============ */}
+      {ruleEditorOpen && data.ruleSuggestion && (
+        <RuleEditor
+          draft={ruleDraft}
+          categories={categories}
+          busy={busy}
+          error={ruleError}
+          onChange={setRuleDraft}
+          onSubmit={createRule}
+          onClose={() => setRuleEditorOpen(false)}
         />
       )}
     </div>
@@ -888,7 +1115,7 @@ export function Cockpit({ data }: { data: CockpitData }) {
 }
 
 // ---------------------------------------------------------------------------
-const GRID_COLS = "62px 1fr 96px 188px 32px";
+const GRID_COLS = "62px 1fr 96px 188px 48px";
 
 const btnGhost: CSSProperties = {
   fontSize: 13,
@@ -922,6 +1149,136 @@ const pillBtn: CSSProperties = {
   cursor: "pointer",
 };
 
+// ---- Shared category dropdown (desktop) ------------------------------------
+// A self-contained type-ahead popover, anchored below its trigger. Used by the
+// Smart-batch "Change category" control.
+function CategoryDropdown({
+  query,
+  options,
+  canCreate,
+  busy,
+  onQuery,
+  onPick,
+  onCreate,
+  onClose,
+}: {
+  query: string;
+  options: CockpitCategory[];
+  canCreate: boolean;
+  busy: boolean;
+  onQuery: (v: string) => void;
+  onPick: (c: CockpitCategory) => void;
+  onCreate: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [onClose]);
+  const shown = options.slice(0, 8);
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: "absolute",
+        top: "calc(100% + 6px)",
+        right: 0,
+        width: 224,
+        background: T.card,
+        border: `1px solid ${T.dim}`,
+        borderRadius: 9,
+        boxShadow: "0 10px 28px rgba(28,26,23,0.16)",
+        zIndex: 30,
+        padding: 6,
+      }}
+    >
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={(e) => onQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onClose();
+          }
+        }}
+        placeholder="Change category…"
+        style={{
+          width: "100%",
+          fontFamily: "inherit",
+          fontSize: 12.5,
+          padding: "7px 9px",
+          borderRadius: 7,
+          border: `1.5px solid ${T.accent}`,
+          background: T.card,
+          color: T.ink,
+          outline: "none",
+          marginBottom: 5,
+        }}
+      />
+      <div style={{ maxHeight: 260, overflowY: "auto" }}>
+        {shown.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => onPick(c)}
+            disabled={busy}
+            style={{
+              width: "100%",
+              textAlign: "left",
+              fontFamily: "inherit",
+              display: "block",
+              padding: "7px 10px",
+              borderRadius: 6,
+              border: "none",
+              background: "transparent",
+              color: T.muted,
+              fontSize: 12.5,
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = T.tintBg)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            {highlightMatch(c.name, query)}
+          </button>
+        ))}
+        {canCreate && (
+          <button
+            onClick={onCreate}
+            disabled={busy}
+            style={{
+              width: "100%",
+              textAlign: "left",
+              fontFamily: "inherit",
+              display: "block",
+              padding: "7px 10px",
+              fontSize: 12,
+              color: T.faint,
+              borderTop: `1px solid ${T.hair}`,
+              borderLeft: "none",
+              borderRight: "none",
+              borderBottom: "none",
+              background: "transparent",
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            + New category “{query.trim()}”
+          </button>
+        )}
+        {shown.length === 0 && !canCreate && (
+          <span style={{ display: "block", padding: "7px 10px", fontSize: 12, color: T.faint }}>No matches</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---- Smart batch card ------------------------------------------------------
 function BatchCard({
   batch,
@@ -930,6 +1287,16 @@ function BatchCard({
   onToggle,
   onFile,
   onFlag,
+  onDismiss,
+  onChangeCategory,
+  desktopPickerOpen,
+  pickerQuery,
+  pickerOptions,
+  pickerCanCreate,
+  onPickerQuery,
+  onPickCategory,
+  onCreateCategory,
+  onClosePicker,
 }: {
   batch: CockpitBatch;
   expanded: boolean;
@@ -937,6 +1304,16 @@ function BatchCard({
   onToggle: () => void;
   onFile: () => void;
   onFlag: (id: string) => void;
+  onDismiss: () => void;
+  onChangeCategory: () => void;
+  desktopPickerOpen: boolean;
+  pickerQuery: string;
+  pickerOptions: CockpitCategory[];
+  pickerCanCreate: boolean;
+  onPickerQuery: (v: string) => void;
+  onPickCategory: (c: CockpitCategory) => void;
+  onCreateCategory: () => void;
+  onClosePicker: () => void;
 }) {
   return (
     <div
@@ -994,6 +1371,39 @@ function BatchCard({
         >
           {batch.total}
         </span>
+        <div style={{ position: "relative" }}>
+          <button
+            onClick={onChangeCategory}
+            disabled={busy}
+            title="File this set under a different category"
+            style={{
+              fontFamily: "inherit",
+              fontSize: 12.5,
+              fontWeight: 500,
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: `1px solid ${T.dim}`,
+              background: "transparent",
+              color: T.muted,
+              cursor: busy ? "default" : "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Change
+          </button>
+          {desktopPickerOpen && (
+            <CategoryDropdown
+              query={pickerQuery}
+              options={pickerOptions}
+              canCreate={pickerCanCreate}
+              busy={busy}
+              onQuery={onPickerQuery}
+              onPick={onPickCategory}
+              onCreate={onCreateCategory}
+              onClose={onClosePicker}
+            />
+          )}
+        </div>
         <button
           onClick={onFile}
           disabled={busy}
@@ -1017,6 +1427,13 @@ function BatchCard({
         </button>
         <span onClick={onToggle} style={{ fontSize: 12, color: T.faint, cursor: "pointer", padding: "0 2px" }}>
           {expanded ? "⌃" : "⌄"}
+        </span>
+        <span
+          onClick={onDismiss}
+          title="Dismiss — break into individual one-offs"
+          style={{ fontSize: 15, lineHeight: 1, color: T.faint, cursor: "pointer", padding: "0 2px" }}
+        >
+          ×
         </span>
       </div>
 
@@ -1081,6 +1498,7 @@ function GridRow({
   onKey,
   onHover,
   onPick,
+  onSkip,
 }: {
   txn: CockpitTxn;
   active: boolean;
@@ -1096,6 +1514,7 @@ function GridRow({
   onKey: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   onHover: (i: number) => void;
   onPick: (i: number) => void;
+  onSkip: () => void;
 }) {
   const label = txn.suggestedCategoryName
     ? `${txn.suggestedCategoryName}?`
@@ -1258,7 +1677,20 @@ function GridRow({
         )}
       </span>
 
-      <span style={{ color: T.dim, textAlign: "center" }}>·</span>
+      {active ? (
+        <span
+          onClick={(e) => {
+            e.stopPropagation();
+            onSkip();
+          }}
+          title="Skip without filing"
+          style={{ fontSize: 11, color: T.faint, cursor: "pointer", textAlign: "center" }}
+        >
+          Skip
+        </span>
+      ) : (
+        <span style={{ color: T.dim, textAlign: "center" }}>·</span>
+      )}
     </div>
   );
 }
@@ -1419,6 +1851,7 @@ function MobileCategorySheet({
   onPick,
   onCreate,
   onAccept,
+  onSkip,
   onClose,
 }: {
   txn: CockpitTxn;
@@ -1430,6 +1863,7 @@ function MobileCategorySheet({
   onPick: (c: { id: string; name: string }) => void;
   onCreate: () => void;
   onAccept: () => void;
+  onSkip: () => void;
   onClose: () => void;
 }) {
   const hasSug = !!txn.suggestedCategoryName;
@@ -1563,11 +1997,11 @@ function MobileCategorySheet({
             <div style={{ padding: "16px 12px", color: T.faint, fontSize: 13 }}>No matches</div>
           )}
         </div>
-        <div style={{ padding: "10px 14px", borderTop: `1px solid ${T.hair}` }}>
+        <div style={{ padding: "10px 14px", borderTop: `1px solid ${T.hair}`, display: "flex", gap: 8 }}>
           <button
             onClick={onClose}
             style={{
-              width: "100%",
+              flex: 1,
               fontFamily: "inherit",
               fontSize: 14,
               fontWeight: 500,
@@ -1580,6 +2014,305 @@ function MobileCategorySheet({
             }}
           >
             Done
+          </button>
+          <button
+            onClick={onSkip}
+            style={{
+              flex: 1,
+              fontFamily: "inherit",
+              fontSize: 14,
+              fontWeight: 500,
+              padding: "11px",
+              borderRadius: 10,
+              border: `1px solid ${T.dim}`,
+              background: "transparent",
+              color: T.muted,
+              cursor: "pointer",
+            }}
+          >
+            Skip →
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---- Mobile bottom sheet for changing a Smart-batch's category ------------
+function BatchCategorySheet({
+  batch,
+  query,
+  options,
+  canCreate,
+  busy,
+  onQuery,
+  onPick,
+  onCreate,
+  onClose,
+}: {
+  batch: CockpitBatch;
+  query: string;
+  options: CockpitCategory[];
+  canCreate: boolean;
+  busy: boolean;
+  onQuery: (v: string) => void;
+  onPick: (c: CockpitCategory) => void;
+  onCreate: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,26,23,0.4)", zIndex: 55 }} />
+      <div
+        style={{
+          position: "fixed",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 60,
+          background: T.card,
+          borderRadius: "16px 16px 0 0",
+          maxHeight: "84vh",
+          display: "flex",
+          flexDirection: "column",
+          boxShadow: "0 -12px 40px rgba(28,26,23,0.22)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "center", padding: "8px 0 4px" }}>
+          <span style={{ width: 38, height: 4, borderRadius: 99, background: T.dim }} />
+        </div>
+        <div style={{ padding: "6px 18px 12px", borderBottom: `1px solid ${T.hair}` }}>
+          <div style={{ ...uppercaseLabel, paddingBottom: 8 }}>Change category</div>
+          <div style={{ fontWeight: 600, fontSize: 15 }}>
+            {batch.title} <span style={{ fontWeight: 400, color: T.faint }}>× {batch.count}</span>
+          </div>
+          <div style={{ fontSize: 12, color: T.faint, paddingTop: 2 }}>File all under a different category</div>
+        </div>
+        <div style={{ padding: "12px 14px 8px" }}>
+          <input
+            value={query}
+            onChange={(e) => onQuery(e.target.value)}
+            placeholder="Search categories…"
+            style={{
+              width: "100%",
+              fontFamily: "inherit",
+              fontSize: 15,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: `1.5px solid ${T.border}`,
+              background: T.bg,
+              color: T.ink,
+              outline: "none",
+            }}
+          />
+        </div>
+        <div style={{ overflowY: "auto", padding: "0 8px 8px", flex: 1 }}>
+          {options.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => onPick(c)}
+              disabled={busy}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                fontFamily: "inherit",
+                fontSize: 15,
+                padding: "13px 12px",
+                borderRadius: 8,
+                border: "none",
+                background: c.id === batch.suggestedCategoryId ? T.tintBg : "transparent",
+                color: T.ink,
+                cursor: "pointer",
+                borderBottom: `1px solid ${T.hair}`,
+              }}
+            >
+              <span>{highlightMatch(c.name, query)}</span>
+              {c.id === batch.suggestedCategoryId && (
+                <span style={{ fontSize: 11, color: T.accent, fontWeight: 600 }}>current</span>
+              )}
+            </button>
+          ))}
+          {canCreate && (
+            <button
+              onClick={onCreate}
+              disabled={busy}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                fontFamily: "inherit",
+                fontSize: 14,
+                padding: "13px 12px",
+                borderRadius: 8,
+                border: "none",
+                background: "transparent",
+                color: T.accent,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              + New category “{query.trim()}”
+            </button>
+          )}
+          {options.length === 0 && !canCreate && (
+            <div style={{ padding: "16px 12px", color: T.faint, fontSize: 13 }}>No matches</div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---- Rule-suggestion editor (centered modal, desktop + mobile) -------------
+type RuleDraft = {
+  name: string;
+  matchField: string;
+  operator: string;
+  value: string;
+  categoryId: string;
+};
+function RuleEditor({
+  draft,
+  categories,
+  busy,
+  error,
+  onChange,
+  onSubmit,
+  onClose,
+}: {
+  draft: RuleDraft;
+  categories: CockpitCategory[];
+  busy: boolean;
+  error: string | null;
+  onChange: (d: RuleDraft) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+}) {
+  const canSubmit = draft.name.trim().length > 0 && draft.value.trim().length > 0 && !!draft.categoryId && !busy;
+  const fieldLabel: CSSProperties = {
+    fontSize: 11,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    color: T.faint,
+    display: "block",
+    paddingBottom: 5,
+  };
+  const inputStyle: CSSProperties = {
+    width: "100%",
+    fontFamily: "inherit",
+    fontSize: 14,
+    padding: "10px 12px",
+    borderRadius: 9,
+    border: `1.5px solid ${T.border}`,
+    background: T.bg,
+    color: T.ink,
+    outline: "none",
+  };
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(28,26,23,0.4)", zIndex: 70 }} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          zIndex: 75,
+          width: "min(420px, calc(100vw - 32px))",
+          background: T.card,
+          borderRadius: 12,
+          border: `1px solid ${T.border}`,
+          boxShadow: "0 24px 60px rgba(28,26,23,0.28)",
+          padding: "20px 20px 18px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <span style={{ fontFamily: T.serif, fontSize: 20, letterSpacing: "-0.4px" }}>New rule</span>
+          <span onClick={onClose} style={{ fontSize: 18, lineHeight: 1, color: T.faint, cursor: "pointer" }}>
+            ×
+          </span>
+        </div>
+
+        <div>
+          <label style={fieldLabel}>Rule name</label>
+          <input
+            value={draft.name}
+            onChange={(e) => onChange({ ...draft, name: e.target.value })}
+            placeholder="Name this rule"
+            style={inputStyle}
+          />
+        </div>
+
+        <div>
+          <label style={fieldLabel}>When payee contains</label>
+          <input
+            value={draft.value}
+            onChange={(e) => onChange({ ...draft, value: e.target.value })}
+            placeholder="e.g. Corcoran Medical Plaza"
+            style={inputStyle}
+          />
+          <div style={{ fontSize: 11.5, color: T.faint, paddingTop: 5 }}>Payee · contains</div>
+        </div>
+
+        <div>
+          <label style={fieldLabel}>File under</label>
+          <select
+            value={draft.categoryId}
+            onChange={(e) => onChange({ ...draft, categoryId: e.target.value })}
+            style={{ ...inputStyle, cursor: "pointer" }}
+          >
+            {!draft.categoryId && <option value="">Choose a category…</option>}
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {error && <div style={{ fontSize: 12.5, color: T.red }}>{error}</div>}
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", paddingTop: 2 }}>
+          <button
+            onClick={onClose}
+            style={{
+              fontFamily: "inherit",
+              fontSize: 13,
+              fontWeight: 500,
+              padding: "9px 16px",
+              borderRadius: 8,
+              border: `1px solid ${T.dim}`,
+              background: "transparent",
+              color: T.muted,
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSubmit}
+            disabled={!canSubmit}
+            style={{
+              fontFamily: "inherit",
+              fontSize: 13,
+              fontWeight: 600,
+              padding: "9px 16px",
+              borderRadius: 8,
+              border: "none",
+              background: T.accent,
+              color: "#FAF9F6",
+              cursor: canSubmit ? "pointer" : "default",
+              opacity: canSubmit ? 1 : 0.55,
+            }}
+          >
+            Create rule
           </button>
         </div>
       </div>

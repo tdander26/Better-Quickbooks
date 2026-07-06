@@ -96,6 +96,13 @@ export interface CockpitAttention {
   detail: string;
 }
 
+export interface CockpitRuleSuggestion {
+  payee: string; // display / match value, e.g. "Corcoran Medical Plaza"
+  categoryId: string;
+  categoryName: string;
+  defaultName: string; // sensible default rule name, e.g. "Corcoran Medical Plaza → Rent"
+}
+
 export interface CockpitTax {
   label: string;
   due: string;
@@ -110,6 +117,7 @@ export interface CockpitData {
   oneOffs: CockpitTxn[];
   recent: CockpitActivity[];
   attention: CockpitAttention[];
+  ruleSuggestion: CockpitRuleSuggestion | null;
   tax: CockpitTax;
   remaining: number;
   grouped: number; // # of txns tied up in batches
@@ -417,7 +425,7 @@ export async function getCockpitData(): Promise<CockpitData> {
 
   // A rule you could create (new): a payee consistently filed the same way, with
   // no rule matching it yet.
-  let ruleSuggestion: { payee: string; catName: string; count: number } | null = null;
+  let ruleSuggestion: { payee: string; catId: string; catName: string; count: number } | null = null;
   for (const [payeeKey, inner] of history) {
     let catId: string | null = null;
     let count = 0;
@@ -434,9 +442,10 @@ export async function getCockpitData(): Promise<CockpitData> {
     );
     if (covered) continue;
     if (!ruleSuggestion || count > ruleSuggestion.count) {
-      ruleSuggestion = { payee: history.has(payeeKey) ? payeeKey : payeeKey, catName: cat.name, count };
+      ruleSuggestion = { payee: payeeKey, catId, catName: cat.name, count };
     }
   }
+  let ruleSuggestionData: CockpitRuleSuggestion | null = null;
   if (ruleSuggestion) {
     // Title-case the payee key for display.
     const pretty = ruleSuggestion.payee.replace(/\b\w/g, (m) => m.toUpperCase());
@@ -447,6 +456,12 @@ export async function getCockpitData(): Promise<CockpitData> {
       tagTone: "neutral",
       detail: `Always file “${pretty}” under ${ruleSuggestion.catName}?`,
     });
+    ruleSuggestionData = {
+      payee: pretty,
+      categoryId: ruleSuggestion.catId,
+      categoryName: ruleSuggestion.catName,
+      defaultName: `${pretty} → ${ruleSuggestion.catName}`,
+    };
   }
 
   // ---- Quarterly estimated tax (25% of this quarter's net profit) ----
@@ -487,6 +502,7 @@ export async function getCockpitData(): Promise<CockpitData> {
     oneOffs,
     recent,
     attention,
+    ruleSuggestion: ruleSuggestionData,
     tax,
     remaining,
     grouped: batchedIds.size,

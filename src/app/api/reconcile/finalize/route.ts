@@ -65,23 +65,35 @@ export async function POST(req: NextRequest) {
   }
 
   const now = new Date();
-  const result = await prisma.$transaction(async (tx) => {
-    // Lock the newly-cleared transactions in this statement's window.
-    const upd = await tx.transaction.updateMany({
+
+  // The statement's transactionCount depends on how many rows the updateMany
+  // touches — a value produced inside the transaction. The libSQL HTTP adapter
+  // doesn't support interactive ($transaction callback) transactions, so instead
+  // count the affected rows first, then run the update + insert as one atomic
+  // array/batch $transaction (the where-clause is identical, so the count the
+  // updateMany would report equals this precount).
+  const affected = await prisma.transaction.count({
+    where: { accountId, clearedStatus: "cleared", postedAt: { lte: end } },
+  });
+  const [, statement] = await prisma.$transaction([
+    prisma.transaction.updateMany({
       where: { accountId, clearedStatus: "cleared", postedAt: { lte: end } },
       data: { clearedStatus: "reconciled", reconciledAt: now },
-    });
-    const statement = await tx.statement.create({
+    }),
+    prisma.statement.create({
       data: {
         accountId,
         endDate: end,
         endingBalanceCents,
-        transactionCount: upd.count,
+        transactionCount: affected,
         reconciledAt: now,
       },
-    });
-    return { statementId: statement.id, reconciledCount: upd.count };
-  });
+    }),
+  ]);
 
-  return NextResponse.json({ ok: true, ...result });
+  return NextResponse.json({
+    ok: true,
+    statementId: statement.id,
+    reconciledCount: affected,
+  });
 }

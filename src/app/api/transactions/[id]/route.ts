@@ -70,30 +70,36 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const counterpart = candidates.length === 1 ? candidates[0] : null;
     const transferId = txn.transferId ?? counterpart?.transferId ?? randomUUID();
 
-    await prisma.$transaction(async (tx) => {
-      await tx.split.deleteMany({ where: { transactionId: txn.id } });
-      await tx.split.create({
+    // Array/batch form (not an interactive callback): the libSQL HTTP adapter
+    // compiles this to a single atomic libSQL batch(). No op reads a value
+    // written by an earlier op, so the direct rewrite is behavior-preserving.
+    const ops: Prisma.PrismaPromise<unknown>[] = [
+      prisma.split.deleteMany({ where: { transactionId: txn.id } }),
+      prisma.split.create({
         data: { transactionId: txn.id, amountCents: txn.amountCents, categoryId: transferCat?.id ?? null },
-      });
-      await tx.transaction.update({
+      }),
+      prisma.transaction.update({
         where: { id: txn.id },
         data: { ...scalar, transferId, reviewed: reviewedFlag(true) },
-      });
-      if (counterpart) {
-        await tx.split.deleteMany({ where: { transactionId: counterpart.id } });
-        await tx.split.create({
+      }),
+    ];
+    if (counterpart) {
+      ops.push(
+        prisma.split.deleteMany({ where: { transactionId: counterpart.id } }),
+        prisma.split.create({
           data: {
             transactionId: counterpart.id,
             amountCents: counterpart.amountCents,
             categoryId: transferCat?.id ?? null,
           },
-        });
-        await tx.transaction.update({
+        }),
+        prisma.transaction.update({
           where: { id: counterpart.id },
           data: { transferId, reviewed: true },
-        });
-      }
-    });
+        })
+      );
+    }
+    await prisma.$transaction(ops);
 
     return NextResponse.json({ ok: true, linked: Boolean(counterpart) });
   }
@@ -132,23 +138,29 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       );
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.split.deleteMany({ where: { transactionId: txn.id } });
-      for (const s of parsed) {
-        await tx.split.create({
+    // Array/batch form: atomic single libSQL batch() on the HTTP adapter.
+    const ops: Prisma.PrismaPromise<unknown>[] = [
+      prisma.split.deleteMany({ where: { transactionId: txn.id } }),
+    ];
+    for (const s of parsed) {
+      ops.push(
+        prisma.split.create({
           data: {
             transactionId: txn.id,
             categoryId: s.categoryId,
             amountCents: s.amountCents,
             memo: s.memo,
           },
-        });
-      }
-      await tx.transaction.update({
+        })
+      );
+    }
+    ops.push(
+      prisma.transaction.update({
         where: { id: txn.id },
         data: { ...scalar, reviewed: reviewedFlag(true), categorizedBy: "manual" },
-      });
-    });
+      })
+    );
+    await prisma.$transaction(ops);
 
     return NextResponse.json({ ok: true });
   }
@@ -161,16 +173,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (!cat) return NextResponse.json({ error: "That category doesn't exist" }, { status: 400 });
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.split.deleteMany({ where: { transactionId: txn.id } });
-      await tx.split.create({
+    // Array/batch form: atomic single libSQL batch() on the HTTP adapter.
+    await prisma.$transaction([
+      prisma.split.deleteMany({ where: { transactionId: txn.id } }),
+      prisma.split.create({
         data: { transactionId: txn.id, categoryId, amountCents: txn.amountCents },
-      });
-      await tx.transaction.update({
+      }),
+      prisma.transaction.update({
         where: { id: txn.id },
         data: { ...scalar, reviewed: reviewedFlag(true), categorizedBy: "manual" },
-      });
-    });
+      }),
+    ]);
 
     return NextResponse.json({ ok: true });
   }

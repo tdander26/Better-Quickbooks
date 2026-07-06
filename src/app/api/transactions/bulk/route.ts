@@ -82,16 +82,19 @@ export async function POST(req: NextRequest) {
 
   let updated = 0;
   for (const t of txns) {
-    await prisma.$transaction(async (tx) => {
-      await tx.split.deleteMany({ where: { transactionId: t.id } });
-      await tx.split.create({
+    // Array/batch form (not an interactive callback): the libSQL HTTP adapter
+    // compiles this to a single atomic libSQL batch(); no dependent intra-txn
+    // reads, so the rewrite is behavior-preserving.
+    await prisma.$transaction([
+      prisma.split.deleteMany({ where: { transactionId: t.id } }),
+      prisma.split.create({
         data: { transactionId: t.id, amountCents: t.amountCents, categoryId: transferCat?.id ?? null },
-      });
-      await tx.transaction.update({
+      }),
+      prisma.transaction.update({
         where: { id: t.id },
         data: { reviewed: true, categorizedBy: "manual", transferId: null },
-      });
-    });
+      }),
+    ]);
     updated++;
   }
   const { linked } = await linkTransfers({ transactionIds: ids });

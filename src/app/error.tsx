@@ -29,6 +29,11 @@ export default function Error({
         {error?.digest && (
           <p className="muted mt-2 font-mono text-xs">Reference: {error.digest}</p>
         )}
+        {error?.message && !/omitted in production/i.test(error.message) && (
+          <p className="mt-3 break-words rounded-lg bg-black/5 px-3 py-2 text-left font-mono text-xs text-rose-700 dark:bg-white/10 dark:text-rose-300">
+            {error.message.slice(0, 300)}
+          </p>
+        )}
         <button className="btn-primary mx-auto mt-5" onClick={reset}>
           <RotateCcw size={16} />
           Try again
