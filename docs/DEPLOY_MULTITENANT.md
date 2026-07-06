@@ -50,10 +50,20 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" | npx w
 #   npx wrangler secret put STRIPE_WEBHOOK_SECRET
 #   STRIPE_PRICE_ID / NEXT_PUBLIC_STRIPE_PRICE_ID as build vars
 
-# 4) Build + deploy
-npm run cf:build
+# 4) Build + deploy — NEXT_PUBLIC_DEMO_LOGIN=1 turns on the password-free
+#    "Continue to demo" button (it signs into the seeded demo business).
+NEXT_PUBLIC_DEMO_LOGIN=1 npm run cf:build
 npm run cf:deploy
 ```
+
+## Login options once it's live
+- **Demo button** ("Continue to demo — no password"): appears because of
+  `NEXT_PUBLIC_DEMO_LOGIN=1`; lands in the seeded demo business with full data.
+  Turn it off later by rebuilding without that flag.
+- **Email/password**: the credentials from step 2 (or `demo@betterbooks.app` /
+  `demo1234`).
+- **Create an account**: the real signup flow — new businesses start on a
+  `trialing` subscription, so they're fully usable without Stripe while testing.
 
 Then open `https://ledger.betterbooks.workers.dev` and sign in with the email +
 password from step 2. If the sign-in redirect misbehaves, add one more secret and
