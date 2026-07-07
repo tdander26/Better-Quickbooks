@@ -98,7 +98,7 @@ export default async function TaxPage({
       {mappedCount === 0 ? (
         <EmptyState
           title="No tax lines set yet"
-          hint="Assign a tax line (like a Schedule C line) to your income and expense categories in Settings, and this page will total your activity by that line for the selected year."
+          hint="Assign a tax line to your income and expense categories in Settings — pick from Schedule C (sole proprietor) or Form 1120-S (S corporation) — and this page will total your activity by that line for the selected year."
           action={
             <Link href="/settings" className="btn-primary mt-1">
               Go to Settings
