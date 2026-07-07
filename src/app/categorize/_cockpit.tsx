@@ -54,7 +54,12 @@ const nextActivityId = () => `local-${activitySeq++}`;
 
 type PendingUndo =
   | { kind: "one"; txn: CockpitTxn; index: number; categoryName: string; amountCents: number; activityId: string }
-  | { kind: "batch"; batch: CockpitBatch; activityId: string };
+  | { kind: "batch"; batch: CockpitBatch; activityId: string }
+  | { kind: "member"; member: CockpitTxn; categoryName: string; amountCents: number; activityId: string };
+
+// A group needs at least this many members to stay a batch; below it, the
+// leftovers dissolve into one-offs (mirrors MIN_BATCH in src/lib/cockpit.ts).
+const MIN_BATCH = 2;
 
 // signed "−18.40" (string) -> integer cents
 function parseSignedCents(s: string): number {
@@ -110,6 +115,10 @@ export function Cockpit({ data }: { data: CockpitData }) {
   // Smart-batch category editing (desktop dropdown / mobile sheet share this key).
   const [batchPickerKey, setBatchPickerKey] = useState<string | null>(null);
   const [batchQuery, setBatchQuery] = useState("");
+
+  // Per-member category editing inside an expanded batch (change one, not all).
+  const [memberPickerId, setMemberPickerId] = useState<string | null>(null);
+  const [memberQuery, setMemberQuery] = useState("");
 
   // Rule-suggestion editor.
   const [ruleEditorOpen, setRuleEditorOpen] = useState(false);
@@ -278,6 +287,14 @@ export function Cockpit({ data }: { data: CockpitData }) {
       });
       setFiled((f) => Math.max(0, f - 1));
       addTally(u.categoryName, u.amountCents, -1);
+    } else if (u.kind === "member") {
+      const ok = await patchTxn(u.member.id, { categoryId: data.uncategorizedId, reviewed: false });
+      setBusy(false);
+      if (!ok) return;
+      // Restore it as a one-off (the batch may have moved on since).
+      setOneOffs((prev) => [u.member, ...prev]);
+      setFiled((f) => Math.max(0, f - 1));
+      addTally(u.categoryName, u.amountCents, -1);
     } else {
       const results = await Promise.all(
         u.batch.txnIds.map((id) => patchTxn(id, { categoryId: data.uncategorizedId, reviewed: false })),
@@ -341,6 +358,64 @@ export function Cockpit({ data }: { data: CockpitData }) {
     [],
   );
 
+  // ---- File ONE member of a batch individually (change one, not all) ----
+  const fileMember = useCallback(
+    async (batch: CockpitBatch, member: CockpitTxn, categoryId: string, categoryName: string) => {
+      if (busy) return;
+      setBusy(true);
+      const ok = await patchTxn(member.id, { categoryId });
+      setBusy(false);
+      if (!ok) return;
+
+      const cents = parseSignedCents(member.amount);
+      const remaining = batch.members.filter((m) => m.id !== member.id);
+
+      if (remaining.length >= MIN_BATCH) {
+        const totalCents = remaining.reduce((n, m) => n + parseSignedCents(m.amount), 0);
+        const totalInflow = totalCents >= 0;
+        setBatches((prev) =>
+          prev.map((b) =>
+            b.key !== batch.key
+              ? b
+              : {
+                  ...b,
+                  members: remaining,
+                  txnIds: remaining.map((m) => m.id),
+                  count: remaining.length,
+                  total: `${totalInflow ? "+" : "−"}${fmtUSD(totalCents, true)}`,
+                  totalInflow,
+                  cta: `File all ${remaining.length}`,
+                  flag: b.flag && b.flag.id === member.id ? null : b.flag,
+                },
+          ),
+        );
+      } else {
+        // Too few left to stay a batch — dissolve the rest into one-offs.
+        setBatches((prev) => prev.filter((b) => b.key !== batch.key));
+        if (remaining.length) setOneOffs((prev) => [...remaining, ...prev]);
+      }
+
+      const activityId = nextActivityId();
+      setFiled((f) => f + 1);
+      addTally(categoryName, cents, 1);
+      setActivity((prev) => [
+        {
+          id: activityId,
+          name: member.payee,
+          meta: member.inflow ? `${categoryName} · today` : `Filed → ${categoryName} · today`,
+          amount: `${member.inflow ? "+" : "−"}${fmtUSD(cents, true)}`,
+          tone: member.inflow ? "accent" : "ink",
+        },
+        ...prev,
+      ]);
+      undoRef.current = { kind: "member", member, categoryName, amountCents: cents, activityId };
+      setCanUndo(Boolean(data.uncategorizedId));
+      setMemberPickerId(null);
+      setMemberQuery("");
+    },
+    [busy, addTally, data.uncategorizedId],
+  );
+
   // Category options for the batch picker (mirrors the one-off type-ahead).
   const batchPickerBatch = batches.find((b) => b.key === batchPickerKey) ?? null;
   const batchOptions = useMemo(() => {
@@ -366,6 +441,38 @@ export function Cockpit({ data }: { data: CockpitData }) {
     setBusy(false);
     if (cat) setBatchCategory(batch, cat);
   }, [batchPickerBatch, busy, batchQuery, createCategory, setBatchCategory]);
+
+  // Per-member picker (inside an expanded batch): options + the batch/member the
+  // currently-open picker belongs to, derived from the open member id.
+  const memberOptions = useMemo(() => {
+    const q = memberQuery.trim().toLowerCase();
+    if (q) return categories.filter((c) => c.name.toLowerCase().includes(q));
+    return categories;
+  }, [memberQuery, categories]);
+  const memberCanCreate =
+    memberQuery.trim().length > 0 &&
+    !categories.some((c) => c.name.toLowerCase() === memberQuery.trim().toLowerCase());
+  const memberPickerCtx = useMemo(() => {
+    if (!memberPickerId) return null;
+    for (const b of batches) {
+      const m = b.members.find((mm) => mm.id === memberPickerId);
+      if (m) return { batch: b, member: m };
+    }
+    return null;
+  }, [memberPickerId, batches]);
+  const pickMemberCategory = useCallback(
+    (cat: { id: string; name: string }) => {
+      if (memberPickerCtx) fileMember(memberPickerCtx.batch, memberPickerCtx.member, cat.id, cat.name);
+    },
+    [memberPickerCtx, fileMember],
+  );
+  const createMemberCategory = useCallback(async () => {
+    if (!memberPickerCtx || busy) return;
+    setBusy(true);
+    const cat = await createCategory(memberQuery.trim());
+    setBusy(false);
+    if (cat) fileMember(memberPickerCtx.batch, memberPickerCtx.member, cat.id, cat.name);
+  }, [memberPickerCtx, busy, memberQuery, createCategory, fileMember]);
 
   // ---- Create a rule from the suggestion editor ----
   const createRule = useCallback(async () => {
@@ -745,6 +852,21 @@ export function Cockpit({ data }: { data: CockpitData }) {
                     onClosePicker={() => {
                       setBatchPickerKey(null);
                       setBatchQuery("");
+                    }}
+                    memberPickerId={memberPickerId}
+                    memberPickerQuery={memberQuery}
+                    memberPickerOptions={memberOptions}
+                    memberPickerCanCreate={memberCanCreate}
+                    onOpenMemberPicker={(id) => {
+                      setMemberPickerId(id);
+                      setMemberQuery("");
+                    }}
+                    onMemberPickerQuery={setMemberQuery}
+                    onPickMemberCategory={pickMemberCategory}
+                    onCreateMemberCategory={createMemberCategory}
+                    onCloseMemberPicker={() => {
+                      setMemberPickerId(null);
+                      setMemberQuery("");
                     }}
                   />
                 ))}
@@ -1297,6 +1419,15 @@ function BatchCard({
   onPickCategory,
   onCreateCategory,
   onClosePicker,
+  memberPickerId,
+  memberPickerQuery,
+  memberPickerOptions,
+  memberPickerCanCreate,
+  onOpenMemberPicker,
+  onMemberPickerQuery,
+  onPickMemberCategory,
+  onCreateMemberCategory,
+  onCloseMemberPicker,
 }: {
   batch: CockpitBatch;
   expanded: boolean;
@@ -1314,6 +1445,15 @@ function BatchCard({
   onPickCategory: (c: CockpitCategory) => void;
   onCreateCategory: () => void;
   onClosePicker: () => void;
+  memberPickerId: string | null;
+  memberPickerQuery: string;
+  memberPickerOptions: CockpitCategory[];
+  memberPickerCanCreate: boolean;
+  onOpenMemberPicker: (memberId: string) => void;
+  onMemberPickerQuery: (v: string) => void;
+  onPickMemberCategory: (c: CockpitCategory) => void;
+  onCreateMemberCategory: () => void;
+  onCloseMemberPicker: () => void;
 }) {
   return (
     <div
@@ -1437,9 +1577,95 @@ function BatchCard({
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 6, padding: "0 15px 13px 61px", flexWrap: "wrap" }}>
-        {(expanded ? batch.members.map((m) => ({ id: m.id, label: `${m.date} · ${m.amount}` })) : batch.items).map(
-          (it) => (
+      {expanded ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "0 15px 12px 61px" }}>
+          {batch.members.map((m) => (
+            <div
+              key={m.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "6px 0",
+                borderTop: `1px solid ${T.hover}`,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 12,
+                  color: T.faint,
+                  minWidth: 52,
+                  fontVariantNumeric: "tabular-nums",
+                  flex: "none",
+                }}
+              >
+                {m.date}
+              </span>
+              <span
+                style={{
+                  fontSize: 12.5,
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={m.payee}
+              >
+                {m.payee}
+              </span>
+              <span
+                style={{
+                  fontSize: 12,
+                  color: m.inflow ? T.accent : T.ink,
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {m.amount}
+              </span>
+              <div style={{ position: "relative", flex: "none" }}>
+                <button
+                  onClick={() => onOpenMemberPicker(m.id)}
+                  disabled={busy}
+                  title="File just this one under its own category"
+                  style={{
+                    fontFamily: "inherit",
+                    fontSize: 11.5,
+                    fontWeight: 500,
+                    padding: "5px 10px",
+                    borderRadius: 7,
+                    border: `1px solid ${T.dim}`,
+                    background: "transparent",
+                    color: T.muted,
+                    cursor: busy ? "default" : "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Change
+                </button>
+                {memberPickerId === m.id && (
+                  <CategoryDropdown
+                    query={memberPickerQuery}
+                    options={memberPickerOptions}
+                    canCreate={memberPickerCanCreate}
+                    busy={busy}
+                    onQuery={onMemberPickerQuery}
+                    onPick={onPickMemberCategory}
+                    onCreate={onCreateMemberCategory}
+                    onClose={onCloseMemberPicker}
+                  />
+                )}
+              </div>
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: T.faint, paddingTop: 6 }}>
+            Change one above to file it on its own, or use “{batch.cta}” to file them together.
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 6, padding: "0 15px 13px 61px", flexWrap: "wrap" }}>
+          {batch.items.map((it) => (
             <span
               key={it.id}
               style={{
@@ -1453,25 +1679,25 @@ function BatchCard({
             >
               {it.label}
             </span>
-          ),
-        )}
-        {batch.flag && (
-          <span
-            onClick={() => onFlag(batch.flag!.id)}
-            title="Pull this one out to handle individually"
-            style={{
-              fontSize: 11.5,
-              color: T.red,
-              background: T.redBg,
-              borderRadius: 6,
-              padding: "3px 9px",
-              cursor: "pointer",
-            }}
-          >
-            ⚑ {batch.flag.text}
-          </span>
-        )}
-      </div>
+          ))}
+          {batch.flag && (
+            <span
+              onClick={() => onFlag(batch.flag!.id)}
+              title="Pull this one out to handle individually"
+              style={{
+                fontSize: 11.5,
+                color: T.red,
+                background: T.redBg,
+                borderRadius: 6,
+                padding: "3px 9px",
+                cursor: "pointer",
+              }}
+            >
+              ⚑ {batch.flag.text}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
