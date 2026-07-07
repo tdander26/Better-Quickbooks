@@ -40,10 +40,18 @@ export SEED_USER_EMAIL="you@example.com"       # the email you'll log in with
 export SEED_USER_PASSWORD="<choose a password>"
 npm run db:seed
 
-# 3) Set / update Cloudflare secrets
-echo "$TURSO_DATABASE_URL" | npx wrangler secret put TURSO_DATABASE_URL
+# 3) Set / update Cloudflare secrets.
+#   IMPORTANT: the Worker's TURSO_DATABASE_URL must use the https:// scheme, NOT
+#   libsql://. On Cloudflare Workers the libSQL "web" client opens a persistent
+#   WebSocket for libsql:// URLs; https:// uses stateless per-query HTTP, which is
+#   what you want on a serverless runtime. (Local `db:seed` above can use either.)
+WORKER_TURSO_URL="${TURSO_DATABASE_URL/libsql:\/\//https://}"
+echo "$WORKER_TURSO_URL" | npx wrangler secret put TURSO_DATABASE_URL
 echo "$TURSO_AUTH_TOKEN"   | npx wrangler secret put TURSO_AUTH_TOKEN
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" | npx wrangler secret put AUTH_SECRET
+#   Also set SEED_USER_EMAIL so the password-free demo button lands in the seeded
+#   business (the demo provider resolves its user from it at runtime):
+echo "$SEED_USER_EMAIL" | npx wrangler secret put SEED_USER_EMAIL
 #   ENCRYPTION_KEY is already set from the first deploy; APP_PASSWORD is unused now.
 #   (Optional, only if you enable paid signups later:)
 #   npx wrangler secret put STRIPE_SECRET_KEY
