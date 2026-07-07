@@ -7,34 +7,13 @@ import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 import authConfig from "@/auth.config";
 import { prisma } from "@/lib/db";
-import { verifyPassword, hashPassword } from "@/lib/password";
-import { createBusiness } from "@/lib/business";
+import { verifyPassword } from "@/lib/password";
+import { authorizeDemo } from "@/lib/demo-auth";
 
 const credentialsSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
-
-/**
- * Ensure the shared demo user + business exist, and return the user. Used by the
- * password-free "demo" provider (gated by NEXT_PUBLIC_DEMO_LOGIN). Idempotent.
- */
-async function ensureDemoUser() {
-  const email = (process.env.SEED_USER_EMAIL || "demo@betterbooks.app").toLowerCase();
-  let user = await prisma.user.findUnique({ where: { email } });
-  if (!user) {
-    // Random unusable password — demo users sign in via the provider, not a password.
-    const rand = `demo-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    user = await prisma.user.create({
-      data: { email, name: "Demo", passwordHash: await hashPassword(rand) },
-    });
-  }
-  const membership = await prisma.membership.findFirst({ where: { userId: user.id } });
-  if (!membership) {
-    await createBusiness(user.id, "Demo Business", "owner");
-  }
-  return { id: user.id, email: user.email, name: user.name };
-}
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
@@ -52,15 +31,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return { id: user.id, email: user.email, name: user.name };
       },
     }),
-    // Password-free preview sign-in. Off unless NEXT_PUBLIC_DEMO_LOGIN="1".
+    // Password-free preview sign-in. Off unless NEXT_PUBLIC_DEMO_LOGIN="1", and
+    // it can ONLY ever sign into the isolated demo identity — never a real
+    // account. See src/lib/demo-auth.ts.
     Credentials({
       id: "demo",
       name: "Demo",
       credentials: {},
-      async authorize() {
-        if (process.env.NEXT_PUBLIC_DEMO_LOGIN !== "1") return null;
-        return ensureDemoUser();
-      },
+      authorize: authorizeDemo,
     }),
   ],
 });
