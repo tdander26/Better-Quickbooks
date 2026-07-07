@@ -85,6 +85,7 @@ export default async function SettingsPage() {
     section: c.section,
     icon: c.icon,
     isSystem: c.isSystem,
+    taxLine: c.taxLine,
   }));
 
   return (

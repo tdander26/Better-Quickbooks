@@ -33,10 +33,12 @@ import {
   Wallet,
   Scale,
   ArrowLeftRight,
+  Receipt,
   type LucideIcon,
 } from "lucide-react";
 import { SECTIONS, SECTION_LABELS, type Section } from "@/lib/types";
 import { CategoryIcon } from "@/lib/icons";
+import { taxLineGroupsForSection, sectionSupportsTaxLine } from "@/lib/tax-lines";
 
 // ── Shared prop shapes (plain, server-serializable) ──────────────────────────
 export interface ConnectionInfo {
@@ -59,6 +61,7 @@ export interface CategoryLite {
   section: string;
   icon: string;
   isSystem: boolean;
+  taxLine: string;
 }
 
 interface SyncSummary {
@@ -697,7 +700,8 @@ function CategoryRow({ category }: { category: CategoryLite }) {
   }
 
   return (
-    <div className="group flex items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: "var(--border)" }}>
+    <div className="group rounded-xl border px-3 py-2" style={{ borderColor: "var(--border)" }}>
+      <div className="flex items-center gap-2">
       <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-gray-500 dark:text-gray-400">
         <CategoryIcon name={category.icon} size={15} />
       </span>
@@ -784,6 +788,83 @@ function CategoryRow({ category }: { category: CategoryLite }) {
           </>
         )}
       </div>
+      </div>
+      {sectionSupportsTaxLine(category.section) && (
+        <TaxLinePicker
+          categoryId={category.id}
+          section={category.section}
+          value={category.taxLine}
+        />
+      )}
+    </div>
+  );
+}
+
+// Per-category tax-line assignment. Offers both Schedule C and Form 1120-S line
+// sets so the owner maps each category to whichever form matches their entity.
+function TaxLinePicker({
+  categoryId,
+  section,
+  value,
+}: {
+  categoryId: string;
+  section: string;
+  value: string;
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+  const groups = taxLineGroupsForSection(section);
+
+  // Preserve a legacy/custom value that isn't in the curated list.
+  const known = new Set(groups.flatMap((g) => g.options.map((o) => o.value)));
+  const hasCustom = value !== "" && !known.has(value);
+
+  async function onChange(e: ChangeEvent<HTMLSelectElement>) {
+    const next = e.target.value;
+    setBusy(true);
+    setError("");
+    setSaved(false);
+    const { ok, data } = await postJson(`/api/categories/${categoryId}`, { taxLine: next }, "PATCH");
+    setBusy(false);
+    if (!ok) {
+      setError((data.error as string) || "Couldn't save tax line.");
+      return;
+    }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+    router.refresh();
+  }
+
+  return (
+    <div className="mt-1.5 flex items-center gap-2 pl-8">
+      <Receipt size={12} className="muted shrink-0" aria-hidden />
+      <select
+        className="input h-8 flex-1 py-0 text-xs"
+        value={value}
+        onChange={onChange}
+        disabled={busy}
+        aria-label="Tax line"
+      >
+        <option value="">No tax line</option>
+        {hasCustom && <option value={value}>{value} (current)</option>}
+        {groups.map((g) => (
+          <optgroup key={g.form} label={g.label}>
+            {g.options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.value}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      {busy ? (
+        <Loader2 className="muted shrink-0 animate-spin" size={13} />
+      ) : saved ? (
+        <Check className="shrink-0 text-emerald-500" size={13} />
+      ) : null}
+      {error && <span className="shrink-0 text-xs text-rose-500">{error}</span>}
     </div>
   );
 }
