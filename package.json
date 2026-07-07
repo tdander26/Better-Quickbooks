@@ -15,7 +15,8 @@
     "cf:build": "prisma generate && opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare preview",
     "cf:deploy": "opennextjs-cloudflare deploy",
-    "deploy": "NEXT_PUBLIC_DEMO_LOGIN=1 npm run cf:build && npm run cf:deploy",
+    "deploy": "npm run cf:build && npm run cf:deploy",
+    "deploy:demo": "NEXT_PUBLIC_DEMO_LOGIN=1 npm run cf:build && npm run cf:deploy",
     "test": "vitest run"
   },
   "prisma": {
